@@ -3,6 +3,8 @@ from typing import Callable, Protocol
 
 import numpy as np
 
+from utils.seed_or_rng import check_seed_or_rng_and_get_rng
+
 
 class InputSignalMappedDatasetGenerator(ABC):
     """
@@ -37,7 +39,7 @@ class InputSignalMappedDatasetGenerator(ABC):
 
 class RandomInputSignalMappedDatasetGenerator(InputSignalMappedDatasetGenerator, ABC):
     @classmethod
-    def create_random_input(cls, *, n: int, seed=0, low=0.0, high=0.5) -> np.ndarray:
+    def create_random_input(cls, *, n: int, seed=None, rng=None, low=0.0, high=0.5) -> np.ndarray:
         """Generate random input data.
 
         Args:
@@ -49,8 +51,8 @@ class RandomInputSignalMappedDatasetGenerator(InputSignalMappedDatasetGenerator,
         Returns:
             np.ndarray: Random input array
         """
-        np.random.seed(seed=seed)
-        return np.random.uniform(low, high, n)
+        rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
+        return rng.uniform(low, high, n)
 
     @classmethod
     def create_with_random_input(cls, *, n: int, seed=0, low=0.0, high=0.5, **kwargs) \
@@ -134,20 +136,20 @@ class DelayedSine(TimeMappedDatasetGenerator):
     y_arr: u_arrをt_lagだけ遅延させたもの
     """
 
-    def __init__(self, noise_std: float = 0.05, freq: float = 1.0, seed: int = 0,
+    def __init__(self, noise_std: float = 0.01, freq: float = 1.0, seed: int = None,
+                 rng: np.random.RandomState = None,
                  lag: int = 1):
         self.noise_std = noise_std
         self.freq = freq
-        self.random_seed = seed
         self.lag = lag
+        self.rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
 
     def __call__(self, t_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        np.random.seed(self.random_seed)
-        u_arr = np.sin(2 * np.pi * self.freq * t_arr) \
-                + np.random.normal(0, self.noise_std, len(t_arr))
+        u_arr = np.sin(2 * np.pi * self.freq * t_arr + self.rng.uniform(0, np.pi))
         y_arr = np.zeros_like(u_arr)
-        if self.lag < len(u_arr):
-            y_arr[self.lag:] = u_arr[:-self.lag]
+        y_arr[self.lag:] = u_arr[:-self.lag]
+        u_arr += self.rng.normal(0, self.noise_std, len(t_arr))
+        y_arr += self.rng.normal(0, self.noise_std, len(t_arr))
         return u_arr, y_arr
 
 
@@ -222,19 +224,29 @@ def train_test_split(
     return (u_train, u_test), (y_train, y_test)
 
 
-def to_continuous_function(arr: np.ndarray, *, t_step: float) -> Callable[[float], float]:
+def to_continuous_function(f_arr: np.ndarray, *, delta_t: float) -> Callable[[float], float]:
     """
     配列を連続関数に変換する関数。
     """
 
     def func(t: float) -> float:
-        i = int(t // t_step)
+        i = int(t // delta_t)
         try:
-            return float(arr[i])
+            return float(f_arr[i])
         except IndexError:
             raise ValueError(
-                f"t={t:.5f}, t_step={t_step:.5f} generates an array index out of range: {i}, "
-                f"expected index less than {len(arr)}"
+                f"t={t:.5f}, t_step={delta_t:.5f} generates an array index out of range: {i}, "
+                f"expected index less than {len(f_arr)}"
             )
 
     return func
+
+
+def to_continuous_function_with_linspace_time(t_arr, f_arr) -> Callable[[float], float]:
+    delta_t = np.diff(t_arr).mean()
+    u_t = to_continuous_function(f_arr, delta_t=delta_t)
+    assert np.allclose(
+        np.vectorize(u_t)(t_arr + delta_t / 2),
+        f_arr,
+    )
+    return u_t

@@ -158,7 +158,7 @@ def test_train_test_split_with_separated_washout(case):
 
 def test_to_continuous_function():
     a = np.arange(5)
-    f = to_continuous_function(a, t_step=0.1)
+    f = to_continuous_function(a, delta_t=0.1)
     f = np.vectorize(f)
     t_test = np.array([0, 0.05, 0.099999999, 0.1, 0.499999999])
     y_test = np.array([0, 0, 0, 1, 4])
