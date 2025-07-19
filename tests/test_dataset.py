@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from utils.dataset import Narma10, to_continuous_function
+from utils.dataset import Narma, to_continuous_function, DelayedSine
 from utils.dataset import train_test_split
 
 
@@ -22,7 +22,7 @@ def test_random_input_generation():
     u_arr_ref = np.random.RandomState(0).uniform(low, high, n)
     assert u_arr_ref.shape == (n,)
 
-    u_arr = Narma10.create_random_input(n=n)
+    u_arr = Narma.create_random_input(n=n)
     assert u_arr.shape == (n,)
 
     np.testing.assert_array_almost_equal(u_arr_ref, u_arr, decimal=10)
@@ -31,7 +31,7 @@ def test_random_input_generation():
 def test_narma10_default_parameters():
     """デフォルトパラメータでのNarma10ラスの動作をテスト"""
     n = 1000
-    u_arr, y_arr = Narma10.create_with_random_input(n=n)
+    u_arr, y_arr = Narma.create_with_random_input(n=n)
     assert u_arr.shape == (n,)
     assert y_arr.shape == (n,)
 
@@ -148,7 +148,7 @@ def test_train_test_split_with_separated_washout(case):
         with pytest.raises(ValueError):
             train_test_split(u_arr, y_arr, test_ratio=case["test_ratio"], **kwargs)
     else:
-        u_train, y_train, u_test, y_test \
+        (u_train, u_test), (y_train, y_test) \
             = train_test_split(u_arr, y_arr, test_ratio=case["test_ratio"], **kwargs)
         np.testing.assert_array_equal(u_train, case["expected_train"])
         np.testing.assert_array_equal(y_train, case["expected_train"] + 100)
@@ -163,3 +163,10 @@ def test_to_continuous_function():
     t_test = np.array([0, 0.05, 0.099999999, 0.1, 0.499999999])
     y_test = np.array([0, 0, 0, 1, 4])
     np.testing.assert_array_equal(f(t_test), y_test)
+
+
+@pytest.mark.parametrize("n", [1, 5, 20])
+def test_delayed_sin(n):
+    t_arr = np.linspace(0, 10, 100)
+    u_arr, y_arr = DelayedSine.create(t_arr, noise_std=0, seed=0, lag=n)
+    np.testing.assert_array_equal(u_arr[:-n], y_arr[n:])

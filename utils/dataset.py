@@ -4,26 +4,38 @@ from typing import Callable, Protocol
 import numpy as np
 
 
-class DatasetGeneratorProtocol(Protocol):
-    def __call__(self, u_arr: np.ndarray) -> np.ndarray:
-        ...
+class InputSignalMappedDatasetGenerator(ABC):
+    """
+    入力信号（u_arr）を受けて (u_arr, y_arr) のタプルを生成するデータセットの抽象基底クラス。
+    """
 
-    @classmethod
-    def create(cls, u_arr: np.ndarray, **kwargs) -> np.ndarray:
-        ...
-
-
-class DatasetGenerator(ABC):
     @abstractmethod
-    def __call__(self, u_arr: np.ndarray) -> np.ndarray:
+    def __call__(self, u_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Generate output data for given input array.
+
+        Args:
+            u_arr (np.ndarray): Input signal array
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Tuple containing input array and corresponding output array
+        """
         raise NotImplementedError()
 
     @classmethod
-    def create(cls, u_arr: np.ndarray, **kwargs):
+    def create(cls, u_arr: np.ndarray, **kwargs) -> tuple[np.ndarray, np.ndarray]:
+        """Create dataset from input array using provided parameters.
+
+        Args:
+            u_arr (np.ndarray): Input signal array
+            **kwargs: Additional arguments passed to class constructor
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Tuple containing input array and corresponding output array
+        """
         return cls(**kwargs)(u_arr)  # type: ignore
 
 
-class RandomInputMixin(DatasetGeneratorProtocol):
+class RandomInputSignalMappedDatasetGenerator(InputSignalMappedDatasetGenerator, ABC):
     @classmethod
     def create_random_input(cls, *, n: int, seed=0, low=0.0, high=0.5) -> np.ndarray:
         """Generate random input data.
@@ -55,50 +67,98 @@ class RandomInputMixin(DatasetGeneratorProtocol):
             tuple[np.ndarray, np.ndarray]: Random input array and corresponding output array
         """
         u_arr = cls.create_random_input(n=n, seed=seed, low=low, high=high)
-        y_arr = cls.create(u_arr, **kwargs)
-        return u_arr, y_arr
+        return cls.create(u_arr, **kwargs)
 
 
-class Narma10(DatasetGenerator, RandomInputMixin):
+class TimeMappedDatasetGenerator(ABC):
     """
-    NARMA10タスクのデータ生成クラス。
-
-    数式:
-        y_{k+1} = a y_k + b y_k \sum_{i=0}^9 y_{k-i} + c u_k u_{k-9} + d
-
-    Args:
-        a (float): y_kの係数
-        b (float): y_kと過去のyの和の積の係数
-        c (float): u_kとu_{k-9}の積の係数
-        d (float): 定数項
+    時刻配列（t_arr）を受けて (u_arr, y_arr) のタプルを生成するデータセットの抽象基底クラス。
     """
 
-    def __init__(self, a=0.3, b=0.05, c=1.5, d=0.1):
+    @abstractmethod
+    def __call__(self, t_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Generate input/output data for given time array.
+
+        Args:
+            t_arr (np.ndarray): Time points array
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Tuple containing input array and corresponding output array 
+        """
+        raise NotImplementedError()
+
+    @classmethod
+    def create(cls, t_arr: np.ndarray, **kwargs) -> tuple[np.ndarray, np.ndarray]:
+        """Create dataset from time array using provided parameters.
+
+        Args:
+            t_arr (np.ndarray): Time points array
+            **kwargs: Additional arguments passed to class constructor
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Tuple containing input array and corresponding output array
+        """
+        return cls(**kwargs)(t_arr)  # type: ignore
+
+
+class Narma(RandomInputSignalMappedDatasetGenerator):
+    """
+    NARMAタスクのデータ生成クラス。
+    入力u_arrから (u_arr, y_arr) を返す。
+    """
+
+    def __init__(self, n: int = 10, a=0.3, b=0.05, c=1.5, d=0.1):
+        self.n = n
         self.a = a
         self.b = b
         self.c = c
         self.d = d
 
-    def __call__(self, u_arr: np.ndarray) -> np.ndarray:
+    def __call__(self, u_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         y_arr = np.zeros_like(u_arr)
-        for k in range(9, len(u_arr) - 1):
+        for k in range(self.n - 1, len(u_arr) - 1):
             y_arr[k + 1] = (
                     self.a * y_arr[k]
-                    + self.b * y_arr[k] * np.sum(y_arr[k - 9:k + 1])
-                    + self.c * u_arr[k] * u_arr[k - 9]
+                    + self.b * y_arr[k] * np.sum(y_arr[k - self.n + 1:k + 1])
+                    + self.c * u_arr[k] * u_arr[k - self.n + 1]
                     + self.d
             )
-        return y_arr
+        return u_arr, y_arr
+
+
+class DelayedSine(TimeMappedDatasetGenerator):
+    """
+    サイン波＋遅延出力データセット。
+    t_arrから (u_arr, y_arr) を返す。
+    u_arr: サイン波＋ノイズ
+    y_arr: u_arrをt_lagだけ遅延させたもの
+    """
+
+    def __init__(self, noise_std: float = 0.05, freq: float = 1.0, seed: int = 0,
+                 lag: int = 1):
+        self.noise_std = noise_std
+        self.freq = freq
+        self.random_seed = seed
+        self.lag = lag
+
+    def __call__(self, t_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        np.random.seed(self.random_seed)
+        u_arr = np.sin(2 * np.pi * self.freq * t_arr) \
+                + np.random.normal(0, self.noise_std, len(t_arr))
+        y_arr = np.zeros_like(u_arr)
+        if self.lag < len(u_arr):
+            y_arr[self.lag:] = u_arr[:-self.lag]
+        return u_arr, y_arr
 
 
 def train_test_split(
-        u_arr, y_arr,
-        *,
+        u_arr, y_arr, t_arr=None,
+        /,
         test_ratio=0.3,
         n_washout: int | None = None,
         n_train_washout: int | None = None,
         n_test_washout: int | None = None,
-):
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
     """
     データを訓練・テストに分割する関数。
 
@@ -112,13 +172,15 @@ def train_test_split(
     Args:
         u_arr (np.ndarray): 入力データ配列
         y_arr (np.ndarray): 出力データ配列
+        t_arr (np.ndarray): 時刻データ配列（省略可）
         test_ratio (float): train/test分割比率 (0.0-1.0, testの割合)
         n_washout (int|None): train/test両方のwashout数
         n_train_washout (int|None): 先頭のwashout数
         n_test_washout (int|None): trainとtestの間のwashout数
 
     Returns:
-        tuple: (u_train, y_train, u_test, y_test)
+        tuple: (u_train, y_train, u_test, y_test, t_train, t_test)
+        ただし時刻データ配列未指定なら(u_train, y_train, u_test, y_test)
     """
     if len(u_arr) != len(y_arr):
         raise ValueError("u_arr and y_arr must have the same length")
@@ -153,8 +215,11 @@ def train_test_split(
     y_train = y_arr[train_start:train_end]
     u_test = u_arr[test_start:test_end]
     y_test = y_arr[test_start:test_end]
-
-    return u_train, y_train, u_test, y_test
+    if t_arr is not None:
+        t_train = t_arr[train_start:train_end]
+        t_test = t_arr[test_start:test_end]
+        return (u_train, u_test), (y_train, y_test), (t_train, t_test)
+    return (u_train, u_test), (y_train, y_test)
 
 
 def to_continuous_function(arr: np.ndarray, *, t_step: float) -> Callable[[float], float]:
