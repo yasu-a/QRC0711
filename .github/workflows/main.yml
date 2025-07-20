@@ -36,7 +36,7 @@ jobs:
       - name: Execute pytest suite
         run: |
           mkdir -p ${{ env.TEST_RESULTS_DIR }}
-          python -m pytest test --junit-xml ${{ env.TEST_RESULTS_DIR }}/${{ env.TEST_REPORT_FILE }}
+          python -m pytest tests --junit-xml ${{ env.TEST_RESULTS_DIR }}/${{ env.TEST_REPORT_FILE }}
         continue-on-error: true
 
       # Test results processing
