@@ -75,10 +75,30 @@ def test_ga_search_no_constraint(n_workers):
         n_gen=4,
         mutation_rate=0.01,
         crossover_rate=0.9,
+        crossover_type="uniform",
         tournament_size=3,
         seed=2,
     )
     search.search(n_workers=n_workers)
+    assert search.best_score == _expected_best_score_no_constraint
+    assert search.best_param == _expected_best_param_no_constraint
+    display_history(search)
+
+
+def test_ga_search_no_constraint_two_point_crossover():
+    search = GAParameterSearcher[TestParamType](
+        param_grid=_param_grid,  # type: ignore
+        param_mapper=_param_mapper,
+        scorer=_param_scorer,
+        n_pop=30,
+        n_gen=20,  # テスト用の問題に対して2点交叉は効率が悪いので多めに設定
+        mutation_rate=0.01,
+        crossover_rate=0.9,
+        crossover_type="two-point",
+        tournament_size=3,
+        seed=2,
+    )
+    search.search(n_workers=1)
     assert search.best_score == _expected_best_score_no_constraint
     assert search.best_param == _expected_best_param_no_constraint
     display_history(search)
@@ -127,6 +147,7 @@ def test_ga_search_with_constraint(n_workers):
         n_gen=4,
         mutation_rate=0.01,
         crossover_rate=0.9,
+        crossover_type="uniform",
         tournament_size=3,
         seed=2,
     )

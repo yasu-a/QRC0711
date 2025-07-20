@@ -1,8 +1,6 @@
+import os
 from dataclasses import asdict
 from datetime import datetime
-import os
-
-import numpy as np
 
 from experiment import run_qrc_experiment
 from model import QRCParam
@@ -21,26 +19,27 @@ def param_mapper_fn(d: dict) -> QRCParam:
         obs_x=bool(d["obs_x"]),
         obs_y=bool(d["obs_y"]),
         obs_z=bool(d["obs_z"]),
-        n_steps=int(d["n_steps"]),
+        n_steps=300,
         t_max=float(d["t_max"]),
-        test_ratio=float(d["test_ratio"]),
-        n_washout=int(d["n_washout"]),
-        n_samples_train=int(d["n_samples_train"]),
-        n_samples_test=int(d["n_samples_test"]),
-        seed=int(d["seed"]),
-        func_type=d["func_type"],
+        test_ratio=0.5,
+        n_washout=50,
+        n_samples_train=4,
+        n_samples_test=2,
+        seed=0,
+        func_type="lagged_random_uniform",
     )
 
 
 def scorer_fn(p: QRCParam) -> float:
-    return run_qrc_experiment(p).test.r2_score_avg
+    result = run_qrc_experiment(p)
+    return result.train.r2_score_avg * 0.3 + result.test.r2_score_avg * 0.7
 
 
 def constraint_predicate_fn(p: QRCParam) -> bool:
     return not (
-        p.obs_x is False and
-        p.obs_y is False and
-        p.obs_z is False
+            p.obs_x is False and
+            p.obs_y is False and
+            p.obs_z is False
     )
 
 
@@ -49,27 +48,21 @@ def main_search():
     searcher = GAParameterSearcher[QRCParam](
         scorer=scorer_fn,
         param_grid=dict(
-            n_qubits=[4],
-            gamma_z=[0.1, 0.01, 0.001, 0.0001, 0.00001],
-            n_mpx=[1, 2, 4, 8, 12, 16, 20],
             j_mean=[0.1, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0],
             h_mean=[0.1, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0],
+            n_qubits=[4],
+            n_mpx=[1, 2, 4, 8, 12, 16, 20],
+            gamma_z=[0.1, 0.01, 0.001, 0.0001, 0.00001],
+            t_max=[1, 3, 10, 30, 100],
             obs_x=[False, True],
             obs_y=[False, True],
             obs_z=[False, True],
-            n_steps=[300],
-            t_max=[1, 3, 10, 30, 100],
-            test_ratio=[0.5],
-            n_washout=[50],
-            n_samples_train=[4],
-            n_samples_test=[2],
-            seed=[0],
-            func_type=["lagged_random_uniform"],
         ),
         param_mapper=param_mapper_fn,
         constraint_predicate=constraint_predicate_fn,
+        crossover_type="uniform",
     )
-    best_param, best_score = searcher.search(n_workers=1)
+    best_param, best_score = searcher.search(n_workers=8)
 
     print(f"Best param: {best_param} with R^2={best_score}")
     import pandas as pd

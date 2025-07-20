@@ -3,7 +3,7 @@ import concurrent.futures
 import warnings
 from collections import OrderedDict
 from collections.abc import Sequence
-from typing import Any, Generic, Callable, Iterator, Iterable
+from typing import Any, Generic, Callable, Iterator, Iterable, Literal
 
 import numpy as np
 from tqdm import tqdm
@@ -183,9 +183,9 @@ class AgentUtil(Generic[ParamType]):
             raise ValueError(f"param = {param} is not feasible")
         return a
 
-    def _crossover_impl(self, a_1: Agent, a_2: Agent) -> tuple[Agent, Agent]:
+    def _uniform_crossover_impl(self, a_1: Agent, a_2: Agent) -> tuple[Agent, Agent]:
         """
-        Perform crossover between two agents (not guaranteed to be feasible).
+        Perform uniform crossover between two agents (not guaranteed to be feasible).
 
         Args:
             a_1: The first parent agent.
@@ -204,22 +204,59 @@ class AgentUtil(Generic[ParamType]):
         assert len(c_1) == len(c_2) == len(a_1)
         return c_1, c_2
 
-    def crossover(self, a_1: Agent, a_2: Agent) -> tuple[Agent, Agent]:
+    def _two_point_crossover_impl(self, a_1: Agent, a_2: Agent) -> tuple[Agent, Agent]:
         """
-        Perform crossover between two agents and ensure the result is feasible.
+        Perform two-point crossover between two agents (not guaranteed to be feasible).
 
         Args:
             a_1: The first parent agent.
             a_2: The second parent agent.
 
         Returns:
+            A tuple of two new Agent instances.
+        """
+        assert len(a_1) == len(a_2), (len(a_1), len(a_2))
+        g_1 = a_1.to_list()
+        g_2 = a_2.to_list()
+        # Select two random points in the genome
+        i, j = self._rng.choice(range(len(a_1)), size=2, replace=False)
+        if i > j:
+            i, j = j, i
+        # Swap the genes between the two points
+        g_1[i:j], g_2[i:j] = g_2[i:j], g_1[i:j]
+        c_1, c_2 = Agent(g_1), Agent(g_2)
+        assert len(c_1) == len(c_2) == len(a_1)
+        return c_1, c_2
+
+    def crossover(
+        self,
+        a_1: Agent,
+        a_2: Agent,
+        *,
+        crossover_type: Literal["uniform", "two-point"],
+    ) -> tuple[Agent, Agent]:
+        """
+        Perform crossover between two agents and ensure the result is feasible.
+
+        Args:
+            a_1: The first parent agent.
+            a_2: The second parent agent.
+            crossover_type: Type of crossover to use.
+
+        Returns:
             A tuple of two feasible Agent instances.
 
         Raises:
             RuntimeError: If feasible children cannot be created after max attempts.
+            ValueError: If the crossover type is invalid.
         """
         for attempt in range(self._max_attempt_error):
-            c_1, c_2 = self._crossover_impl(a_1, a_2)
+            if crossover_type == "uniform":
+                c_1, c_2 = self._uniform_crossover_impl(a_1, a_2)
+            elif crossover_type == "two-point":
+                c_1, c_2 = self._two_point_crossover_impl(a_1, a_2)
+            else:
+                raise ValueError(f"Invalid crossover type: {crossover_type}")
             if self.is_feasible(c_1) and self.is_feasible(c_2):
                 return c_1, c_2
             if attempt >= self._max_attempt_warning:
@@ -339,7 +376,8 @@ class Population:  # mutable
         """
         scores = {}
         with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
-            futures = {executor.submit(self._agent_util.eval_score, agent): agent for agent in self._agents}
+            futures = {executor.submit(self._agent_util.eval_score, agent): agent for agent in
+                       self._agents}
             for future in concurrent.futures.as_completed(futures):
                 agent_key = futures[future]
                 try:
@@ -382,12 +420,20 @@ class Population:  # mutable
 
         return selected_parents
 
-    def evolve(self, *, crossover_rate: float, mutation_rate: float, tournament_size: int) -> None:
+    def evolve(
+        self,
+        *,
+        crossover_rate: float,
+        crossover_type: Literal["uniform", "two-point"],
+        mutation_rate: float,
+        tournament_size: int,
+    ) -> None:
         """
         Evolve the population to the next generation.
 
         Args:
             crossover_rate: Probability of crossover between parents.
+            crossover_type: Type of crossover to use.
             mutation_rate: Probability of mutation for each child.
             tournament_size: Number of agents in each tournament for selection.
         """
@@ -397,7 +443,7 @@ class Population:  # mutable
         next_agents = []
         for p_1, p_2 in selected_parents:
             if self._rng.random() < crossover_rate:
-                c_1, c_2 = self._agent_util.crossover(p_1, p_2)
+                c_1, c_2 = self._agent_util.crossover(p_1, p_2, crossover_type=crossover_type)
             else:
                 c_1, c_2 = p_1, p_2
             if self._rng.random() < mutation_rate:
@@ -407,7 +453,7 @@ class Population:  # mutable
             next_agents.append(c_1)
             next_agents.append(c_2)
         # Two children are added for each parent pair, so len(next_agents) is always even.
-        # Since size is even in initialize_population, this assert always holds.
+        # Since size is even in initialize_population, this assertion always holds.
         assert len(self._agents) == len(next_agents)
         self._agents = next_agents
 
@@ -438,9 +484,11 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
             n_gen: int = 10,  # Number of generations
             mutation_rate: float = 0.01,  # Mutation rate
             crossover_rate: float = 0.9,  # Crossover rate
+            crossover_type: Literal["uniform", "two-point"],  # Type of crossover to use
             tournament_size: int = 3,  # Tournament selection size
             seed: int | None = None,  # Random seed
-            constraint_predicate: Callable[[ParamType], bool] | None = None,  # Feasibility predicate
+            constraint_predicate: Callable[[ParamType], bool] | None = None,
+            # Feasibility predicate
     ):
         """
         Initialize the GAParameterSearcher.
@@ -453,6 +501,9 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
             n_gen: Number of generations.
             mutation_rate: Probability of mutation for each child.
             crossover_rate: Probability of crossover between parents.
+            crossover_type: Type of crossover to use.
+                If the combination of adjacent parameters is important, use "two-point".
+                Otherwise, "uniform" is recommended.
             tournament_size: Number of agents in each tournament for selection.
             seed: Random seed for reproducibility.
             constraint_predicate: Function to check if a parameter set is feasible.
@@ -463,6 +514,7 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
         self._n_gen = n_gen
         self._mutation_rate = mutation_rate
         self._crossover_rate = crossover_rate
+        self._crossover_type = crossover_type
         self._tournament_size = tournament_size
 
         if seed is not None:
@@ -498,12 +550,14 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
                 it = current_population.evaluate_single()
             else:
                 it = current_population.evaluate_parallel(n_workers=n_workers)
-            bar = tqdm(it, total=self._n_pop, desc=f"[GA] Evaluating Population (gen={generation+1}, n_workers={n_workers})")
+            bar = tqdm(it, total=self._n_pop,
+                       desc=f"[GA] Evaluating Population (gen={generation + 1}, n_workers={n_workers})")
             scores = {}
             try:
                 for agent, score in bar:
                     scores[agent] = score
-                    bar.set_description(f"[GA] Evaluating Population (gen={generation+1}, best={max(scores.values()):.4f})")
+                    bar.set_description(
+                        f"[GA] Evaluating Population (gen={generation + 1}, best={max(scores.values()):.4f})")
             except KeyboardInterrupt:
                 warnings.warn("KeyboardInterrupt", UserWarning)
                 break
@@ -513,9 +567,9 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
                 self.add_record(param, score)
 
             print(
-                f"Generation {generation + 1}/{self._n_gen}\n"
+                f"\nGeneration {generation + 1}/{self._n_gen}\n"
                 f" - best: {self.best_score:.3f}\n"
-                f" - param: {self.best_param!r}"
+                f" - param: {self.best_param!r}\n"
             )
 
             # Do not generate the next generation for the last generation
@@ -523,6 +577,7 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
                 # Evolve the population to generate the next generation
                 current_population.evolve(
                     crossover_rate=self._crossover_rate,
+                    crossover_type=self._crossover_type,
                     mutation_rate=self._mutation_rate,
                     tournament_size=self._tournament_size,
                 )
