@@ -6,51 +6,20 @@ on: [push]
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    env:
-      PYTHON_VERSION: '3.12'
-      TEST_RESULTS_DIR: 'test-results'
-      TEST_REPORT_FILE: 'pytest-results.xml'
-
     steps:
-      # Repository setup
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      # Python environment setup
-      - name: Configure Python
+      - name: Set up Python
         uses: actions/setup-python@v2
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: '3.12'
 
-      - name: Install test dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest
           pip install -r requirements.txt
+          pip install pytest
 
-      # Test execution
-      - name: Execute pytest suite
-        run: |
-          mkdir -p ${{ env.TEST_RESULTS_DIR }}
-          python -m pytest tests --junit-xml ${{ env.TEST_RESULTS_DIR }}/${{ env.TEST_REPORT_FILE }}
-        continue-on-error: true
-
-      # Test results processing
-      - name: Store test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-results-python-${{ env.PYTHON_VERSION }}
-          path: ${{ env.TEST_RESULTS_DIR }}/*.xml
-
-      - name: Retrieve test artifacts
-        if: always()
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Publish test report
-        if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        with:
-          files: artifacts/**/*.xml
+      - name: Run tests
+        run: pytest
