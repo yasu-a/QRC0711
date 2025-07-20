@@ -159,7 +159,7 @@ class QRCExperiment:
             dataset = [
                 cls._create_constant_step_time_series(
                     lambda t_arr: LaggedInput.create_with_random_input(
-                        n=len(t_arr), rng=rng, lag=5 * param.n_mpx
+                        n=len(t_arr), rng=rng, lag=5
                     ),
                     t_max=param.t_max,
                     n_steps=param.n_steps,

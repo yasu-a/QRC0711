@@ -26,8 +26,8 @@ class GridParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
             for future in bar:
                 param = futures[future]
                 score = future.result()
-                self._history.append((param, score))
-                bar.set_description(f"Best score={max(score for _, score in self._history):.3f}")
+                self.add_record(param, score)
+                bar.set_description(f"Best score={self.best_score:.3f}")
 
-        if not self._history:
+        if self.is_empty:
             raise RuntimeError("No valid parameter found")

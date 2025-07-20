@@ -312,7 +312,7 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
             for agent, score in current_population.iter_agents_and_scores():
                 agent_param_dict = agent.to_param_dict(self._values_lst)
                 agent_param = self._param_mapper(agent_param_dict)
-                self._history.append((agent_param, score))
+                self.add_record(agent_param, score)
 
             print(
                 f"Generation {generation + 1}/{self.n_gen}: "
@@ -328,5 +328,5 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
                     tournament_size=self.tournament_size
                 )
 
-        if not self._history:
+        if self.is_empty:
             raise RuntimeError("No valid parameter found after GA search")

@@ -16,25 +16,32 @@ class AbstractParameterSearcher(ABC, Generic[ParamType]):
         self.__scorer = scorer
         self._param_grid = param_grid
         self._param_mapper = param_mapper
-        self._forbid_predicate = forbid_predicate
+        self.__forbid_predicate = forbid_predicate
 
-        self._history: list[tuple[ParamType, float]] = []  # list of parameters and scores
+        self.__history: list[tuple[ParamType, float]] = []  # list of parameters and scores
+
+    @property
+    def is_empty(self) -> bool:
+        return len(self.__history) == 0
 
     @property
     def best_score(self) -> float:
-        if not self._history:
+        if not self.__history:
             raise ValueError("no search history recorded")
-        return max(score for _, score in self._history)
+        return max(score for _, score in self.__history)
 
     @property
     def best_param(self) -> ParamType:
-        if not self._history:
+        if not self.__history:
             raise ValueError("no search history recorded")
-        return max(self._history, key=lambda x: x[1])[0]
+        return max(self.__history, key=lambda x: x[1])[0]
 
     @property
     def history(self) -> list[tuple[ParamType, float]]:
-        return copy.deepcopy(self._history)
+        return copy.deepcopy(self.__history)
+
+    def add_record(self, p: ParamType, score: float) -> None:
+        self.__history.append((p, score))
 
     def _eval_score(self, p: ParamType) -> float:
         score = self.__scorer(p)
@@ -43,9 +50,9 @@ class AbstractParameterSearcher(ABC, Generic[ParamType]):
 
     def _is_forbidden(self, param_dict: dict[str, Any]) -> bool:
         """パラメータが禁止領域に含まれるかチェック"""
-        if self._forbid_predicate is None:
+        if self.__forbid_predicate is None:
             return False
-        return self._forbid_predicate(param_dict)
+        return self.__forbid_predicate(param_dict)
 
     @abstractmethod
     def _run_search(self, *, n_workers: int) -> None:
