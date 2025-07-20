@@ -8,7 +8,7 @@ from model import QRCParam
 """
 やること
  - 物理系なので横軸をtに統一したい
- - これはNV-QRCではないのでtime-multiplexingの概念にとらわれる必要はない
+ - これはFN-QRCではないのでtime-multiplexingの概念にとらわれる必要はない
 
 MPX1単位の相互作用時間はt_delta/n_mpx
 シミュレーション最大時間はt_delta*n_stepsで決まる
