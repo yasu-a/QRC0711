@@ -5,6 +5,17 @@ from datetime import datetime
 from experiment import run_qrc_experiment
 from model import QRCParam
 
+"""
+やること
+ - 物理系なので横軸をtに統一したい
+ - これはNV-QRCではないのでtime-multiplexingの概念にとらわれる必要はない
+
+MPX1単位の相互作用時間はt_delta/n_mpx
+シミュレーション最大時間はt_delta*n_stepsで決まる
+初期washoutはn_washout
+離散時間データセットは1ステップの継続時間t_deltaからn_stepsまでを生成
+"""
+
 
 # パラメータ探索グリッド
 def param_mapper_fn(d: dict) -> QRCParam:
@@ -20,8 +31,7 @@ def param_mapper_fn(d: dict) -> QRCParam:
         obs_y=bool(d["obs_y"]),
         obs_z=bool(d["obs_z"]),
         n_steps=300,
-        t_max=float(d["t_max"]),
-        test_ratio=0.5,
+        t_max=100.0,
         n_washout=50,
         n_samples_train=4,
         n_samples_test=2,
@@ -50,17 +60,20 @@ def main_search():
         param_grid=dict(
             j_mean=[0.1, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0],
             h_mean=[0.1, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0],
-            n_qubits=[4],
+            gamma_z=[0.001, 0.0001, 0.00001],
+            n_qubits=[2, 3, 4],
             n_mpx=[1, 2, 4, 8, 12, 16, 20],
-            gamma_z=[0.1, 0.01, 0.001, 0.0001, 0.00001],
-            t_max=[1, 3, 10, 30, 100],
             obs_x=[False, True],
             obs_y=[False, True],
             obs_z=[False, True],
         ),
         param_mapper=param_mapper_fn,
         constraint_predicate=constraint_predicate_fn,
+        n_pop=60,
+        n_gen=5,
+        crossover_rate=.90,
         crossover_type="uniform",
+        tournament_size=5,
     )
     best_param, best_score = searcher.search(n_workers=8)
 

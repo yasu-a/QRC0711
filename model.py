@@ -103,7 +103,6 @@ class QRCParam:
     obs_y: bool
     obs_z: bool
     t_max: float
-    test_ratio: float
     n_washout: int
     n_samples_train: int
     n_samples_test: int
@@ -136,8 +135,6 @@ class QRCParam:
             (f"invalid value of `obs_z`", type(self.obs_z), self.obs_z)
         assert isinstance(self.t_max, (float, int)), \
             (f"invalid value of `t_max`", type(self.t_max), self.t_max)
-        assert isinstance(self.test_ratio, float), \
-            (f"invalid value of `test_ratio`", type(self.test_ratio), self.test_ratio)
         assert isinstance(self.n_washout, int), \
             (f"invalid value of `n_washout`", type(self.n_washout), self.n_washout)
         assert isinstance(self.n_samples_train, int), \

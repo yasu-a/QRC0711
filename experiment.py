@@ -256,6 +256,7 @@ class QRCExperiment:
             )
         return regression_results
 
+    # noinspection DuplicatedCode
     def run(self, *, show_progress=False) \
             -> tuple[QRCExperimentResultEntry, QRCExperimentResultEntry]:
         """QRC実験を実行"""
