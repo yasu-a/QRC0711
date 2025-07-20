@@ -3,9 +3,6 @@
 name: Run Pytest
 on: [push]
 
-name: Run Pytest
-on: [ push ]
-
 jobs:
   pytest:
     runs-on: ubuntu-latest
