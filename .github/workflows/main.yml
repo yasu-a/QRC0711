@@ -6,45 +6,50 @@ on: [push]
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: &python_version '3.12'
+      TEST_RESULTS_DIR: &results_dir 'test-results'
+      TEST_REPORT_FILE: &report_file 'pytest-results.xml'
 
     steps:
-      # リポジトリをチェックアウト
-      - name: Checkout
+      # Repository setup
+      - name: Checkout repository
         uses: actions/checkout@v2
 
-      # Pythonの環境をセットアップ
-      - name: Set up Python 3.12
+      # Python environment setup
+      - name: Configure Python $*python_version
         uses: actions/setup-python@v2
         with:
-          python-version: 3.12
+          python-version: *python_version
 
-      # pytestをインストール
-      - name: Install dependencies
+      - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest
 
-      # pytest -> JUnit xml形式で結果を出力
-      - name: PyTest
+      # Test execution
+      - name: Execute pytest suite
         run: |
-          python -m pytest test --junit-xml results/pytest.xml
+          mkdir -p ${{ env.TEST_RESULTS_DIR }}
+          python -m pytest test --junit-xml ${{ env.TEST_RESULTS_DIR }}/${{ env.TEST_REPORT_FILE }}
         continue-on-error: true
 
-      # テスト結果の表示
-      - name: Upload Unit Test Results
-        if: ${{ always() }}
+      # Test results processing
+      - name: Store test results
+        if: always()
         uses: actions/upload-artifact@v2
         with:
-          name: Unit Test Results (Python 3.12)
-          path: results/*.xml
+          name: pytest-results-python-${{ env.PYTHON_VERSION }}
+          path: ${{ env.TEST_RESULTS_DIR }}/*.xml
 
-      - name: Download Artifacts
-        if: success() || failure()
+      - name: Retrieve test artifacts
+        if: always()
         uses: actions/download-artifact@v2
         with:
           path: artifacts
 
-      - name: Publish Unit Test Results
+      - name: Publish test report
+        if: always()
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           junit_files: artifacts/**/*.xml
