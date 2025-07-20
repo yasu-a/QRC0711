@@ -108,6 +108,7 @@ class QRCParam:
     n_samples_train: int
     n_samples_test: int
     seed: int
+    func_type: Literal["lagged_sine", "lagged_random_uniform"]
 
     # noinspection DuplicatedCode
     def __post_init__(self):

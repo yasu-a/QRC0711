@@ -2,7 +2,6 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import pandas as pd
-import pytest
 
 from search.ga import GAParameterSearcher
 from search.grid import GridParameterSearcher
@@ -40,12 +39,26 @@ forbid = [
 ]
 
 
+def forbid_predicate_fn(param_dict) -> bool:
+    if param_dict["e"] == "aa":
+        return True
+    if (param_dict["a"] == 3
+            and param_dict["b"] == 30
+            and param_dict["c"] == 300
+            and param_dict["d"] == 0.3
+            and param_dict["e"] == "aaa"):
+        return True
+    if param_dict["b"] == 40 and param_dict["c"] == 400:
+        return True
+    return False
+
+
 def test_grid_search_with_forbid():
     search = GridParameterSearcher[TestParamType](
         param_grid=param_grid,  # type: ignore
         param_mapper=param_mapper,
         scorer=scorer,
-        forbid=forbid,
+        forbid_predicate=forbid_predicate_fn,
     )
     search.search(n_workers=2)
     assert search.best_param == TestParamType(a=4, b=30, c=400, d=0.4, e="aaaa")
@@ -57,7 +70,7 @@ def test_ga_search_with_forbid():
         param_grid=param_grid,  # type: ignore
         param_mapper=param_mapper,
         scorer=scorer,
-        forbid=forbid,
+        forbid_predicate=forbid_predicate_fn,
         n_pop=20,
         n_gen=5,
         mutation_rate=0.1,

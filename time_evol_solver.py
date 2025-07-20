@@ -17,6 +17,7 @@ class TimeEvolutionSolver:
         self._observable = observable
         self._collapse_operator = collapse_operator
 
+        # noinspection PyTypeChecker
         self._init_rho = init_psi * init_psi.dag()
         self._rho = self._init_rho
 

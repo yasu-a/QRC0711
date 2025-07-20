@@ -26,8 +26,8 @@ def fullgate(n_qubit: int, fmt: str):
                    with identity matrices filling unspecified positions
 
     Examples:
-        >>> fullgate(2, "X1")  # Identity on qubit 0, X gate on qubit 1
-        >>> fullgate(3, "X0,Y1,Z2")  # X,Y,Z gates on qubits 0,1,2 respectively
+        >>> fullgate(2, "X1") # Identity on qubit 0, X gate on qubit 1
+        >>> fullgate(3, "X0,Y1,Z2") # X, Y, Z gates on qubits 0, 1, 2 respectively
 
     Raises:
         ValueError: If qubit indices in fmt are not unique and ordered

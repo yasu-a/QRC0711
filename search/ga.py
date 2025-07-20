@@ -1,5 +1,5 @@
 import concurrent.futures
-from typing import Any, Generic, Callable, Collection
+from typing import Any, Generic, Callable, Collection, Iterator
 
 import numpy as np
 from tqdm import tqdm
@@ -69,7 +69,7 @@ class Agent:
             if rng.random() < mutation_rate:
                 # 該当するパラメータの取りうる値の範囲内でランダムに選択
                 mutated_genes[i] = rng.randint(0, len(values_lst[key]))
-        
+
         return Agent.from_list(keys=list(self._keys), indexes=mutated_genes)
 
 
@@ -77,13 +77,13 @@ class Population:
     """遺伝的アルゴリズムの集団を表すクラス"""
 
     def __init__(
-        self,
-         *, 
-         agents: list[Agent],
-         values_lst: dict[str, list[Any]],
-         param_mapper: Callable[[dict[str, Any]], ParamType],
-         rng: np.random.RandomState,
-         is_forbidden_predicate: Callable[[dict[str, Any]], bool] | None = None,
+            self,
+            *,
+            agents: list[Agent],
+            values_lst: dict[str, list[Any]],
+            param_mapper: Callable[[dict[str, Any]], ParamType],
+            rng: np.random.RandomState,
+            is_forbidden_predicate: Callable[[dict[str, Any]], bool] | None = None,
     ):
         self._agents = agents
         self._values_lst = values_lst
@@ -94,37 +94,38 @@ class Population:
 
     @classmethod
     def generate_random(
-        cls,
-        *,
-        size: int,
-        keys: list[str],
-        values_lst: dict[str, list[Any]],
-        param_mapper: Callable[[dict[str, Any]], ParamType],
-        rng: np.random.RandomState,
-        is_forbidden_predicate: Callable[[dict[str, Any]], bool] | None = None,
+            cls,
+            *,
+            size: int,
+            keys: list[str],
+            values_lst: dict[str, list[Any]],
+            param_mapper: Callable[[dict[str, Any]], ParamType],
+            rng: np.random.RandomState,
+            is_forbidden_predicate: Callable[[dict[str, Any]], bool] | None = None,
     ) -> "Population":
         """ランダムな集団を生成"""
         agents = []
         attempts = 0
         max_attempts = size * 10  # 無限ループを防ぐ
-        
+
         while len(agents) < size and attempts < max_attempts:
             indexes = []
             for key in keys:
                 indexes.append(rng.randint(0, len(values_lst[key])))
             agent = Agent.from_list(keys=keys, indexes=indexes)
-            
+
             # forbidチェック
             param_dict = agent.to_param_dict(values_lst)
             is_forbidden = is_forbidden_predicate(param_dict) if is_forbidden_predicate else False
-            
+
             if not is_forbidden:
                 agents.append(agent)
             attempts += 1
-            
+
         if len(agents) < size:
-            raise RuntimeError(f"Could not generate enough valid agents. Generated {len(agents)}/{size}")
-            
+            raise RuntimeError(
+                f"Could not generate enough valid agents. Generated {len(agents)}/{size}")
+
         return cls(
             agents=agents,
             values_lst=values_lst,
@@ -157,7 +158,7 @@ class Population:
                     agent_key, p_obj = futures[future]
                     try:
                         score = future.result()
-                    except:
+                    except Exception:
                         print("Error occurred while evaluating", p_obj)
                         raise
                     scores[agent_key] = score
@@ -197,7 +198,8 @@ class Population:
                 selected_parents.append(best_candidate)
         return selected_parents
 
-    def evolve(self, *, crossover_rate: float, mutation_rate: float, tournament_size: int) -> "Population":
+    def evolve(self, *, crossover_rate: float, mutation_rate: float,
+               tournament_size: int) -> "Population":
         """集団を進化させて新しい集団を生成"""
         selected_parents = self.selection(tournament_size=tournament_size)
 
@@ -223,9 +225,11 @@ class Population:
             # forbidチェック
             param_dict1 = mutated_child1.to_param_dict(self._values_lst)
             param_dict2 = mutated_child2.to_param_dict(self._values_lst)
-            
-            is_forbidden1 = self._is_forbidden_predicate(param_dict1) if self._is_forbidden_predicate else False
-            is_forbidden2 = self._is_forbidden_predicate(param_dict2) if self._is_forbidden_predicate else False
+
+            is_forbidden1 = self._is_forbidden_predicate(
+                param_dict1) if self._is_forbidden_predicate else False
+            is_forbidden2 = self._is_forbidden_predicate(
+                param_dict2) if self._is_forbidden_predicate else False
 
             if not is_forbidden1:
                 next_agents.append(mutated_child1)
@@ -242,14 +246,9 @@ class Population:
             is_forbidden_predicate=self._is_forbidden_predicate,
         )
 
-    def get_best_agent(self) -> tuple[Agent, float]:
-        """最良のエージェントとそのスコアを取得"""
-        if not self._scores:
-            raise ValueError("Population has not been evaluated yet")
-
-        best_agent = max(self._scores.items(), key=lambda x: x[1])[0]
-        best_score = self._scores[best_agent]
-        return best_agent, best_score
+    def iter_agents_and_scores(self) -> Iterator[tuple[Agent, float]]:
+        """エージェントとスコアのイテレータを返す"""
+        yield from self._scores.items()
 
 
 class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
@@ -269,9 +268,9 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
             crossover_rate: float = 0.8,  # 交叉率
             tournament_size: int = 3,  # トーナメント選択のサイズ
             seed: int | None = None,  # 乱数シード
-            forbid: list[dict[str, Any]] | None = None,  # 禁止パラメータ
+            forbid_predicate: Callable[[dict[str, Any]], bool] | None = None,  # 禁止パラメータ
     ):
-        super().__init__(scorer, param_grid, param_mapper, forbid=forbid)
+        super().__init__(scorer, param_grid, param_mapper, forbid_predicate=forbid_predicate)
         self.n_pop = n_pop
         self.n_gen = n_gen
         self.mutation_rate = mutation_rate
@@ -309,7 +308,7 @@ class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
                 break
 
             # 全てのエージェントのパラメータとスコアを記録
-            for agent, score in current_population._scores.items():
+            for agent, score in current_population.iter_agents_and_scores():
                 agent_param_dict = agent.to_param_dict(self._values_lst)
                 agent_param = self._param_mapper(agent_param_dict)
                 self._history.append((agent_param, score))

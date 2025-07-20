@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Protocol
+from typing import Callable
 
 import numpy as np
 
@@ -44,7 +44,8 @@ class RandomInputSignalMappedDatasetGenerator(InputSignalMappedDatasetGenerator,
 
         Args:
             n (int): Number of data points to generate
-            seed (int, optional): Random seed for reproducibility. Defaults to 0.
+            seed (int, optional): Random seed for reproducibility. Defaults to None.
+            rng (np.random.RandomState, optional): Random number generator. Defaults to None.
             low (float, optional): Lower bound of uniform distribution. Defaults to 0.0.
             high (float, optional): Upper bound of uniform distribution. Defaults to 0.5.
 
@@ -55,20 +56,22 @@ class RandomInputSignalMappedDatasetGenerator(InputSignalMappedDatasetGenerator,
         return rng.uniform(low, high, n)
 
     @classmethod
-    def create_with_random_input(cls, *, n: int, seed=0, low=0.0, high=0.5, **kwargs) \
+    def create_with_random_input(cls, *, n: int, seed=None, rng=None, low=0.0, high=0.5, **kwargs) \
             -> tuple[np.ndarray, np.ndarray]:
         """Generate random input data and corresponding output.
 
         Args:
             n (int): Number of data points to generate
-            seed (int, optional): Random seed for reproducibility. Defaults to 0.
+            seed (int, optional): Random seed for reproducibility. Defaults to None.
+            rng (np.random.RandomState, optional): Random number generator. Defaults to None.
             low (float, optional): Lower bound of uniform distribution. Defaults to 0.0.
             high (float, optional): Upper bound of uniform distribution. Defaults to 0.5.
+            **kwargs: Additional arguments passed to class constructor
 
         Returns:
             tuple[np.ndarray, np.ndarray]: Random input array and corresponding output array
         """
-        u_arr = cls.create_random_input(n=n, seed=seed, low=low, high=high)
+        u_arr = cls.create_random_input(n=n, seed=seed, rng=rng, low=low, high=high)
         return cls.create(u_arr, **kwargs)
 
 
