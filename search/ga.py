@@ -152,7 +152,7 @@ class Population:
                        for agent, p_obj in agent_to_param_dict_map.items()}
 
             bar = tqdm(concurrent.futures.as_completed(futures), total=len(futures),
-                       desc="Evaluating Population")
+                       desc="[GA] Evaluating Population")
             try:
                 for future in bar:
                     agent_key, p_obj = futures[future]
@@ -162,6 +162,7 @@ class Population:
                         print("Error occurred while evaluating", p_obj)
                         raise
                     scores[agent_key] = score
+                    bar.set_description(f"[GA] Evaluating Population (best={max(scores.values()):.4f})")
             except KeyboardInterrupt:
                 print("Stopping evaluation ...")
                 executor.shutdown(wait=True, cancel_futures=True)

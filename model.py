@@ -300,7 +300,7 @@ class QRCExperimentResultEntry:
         else:
             avg_r2 = float("nan")
 
-        ax.plot([self.y_min, self.y_max], [self.y_min, self.y_max], 'k--', label='y=true')
+        ax.plot([self.y_min, self.y_max], [self.y_min, self.y_max], 'k--', label='y_pred = y_true')
         ax.set_xlabel('y_true')
         ax.set_ylabel('y_pred')
         ax.set_title(f'{self.name} R²={avg_r2:.3f} avg')

@@ -149,7 +149,7 @@ class QRCExperiment:
         if param.func_type == "lagged_sine":
             dataset = [
                 cls._create_oversampled_time_series_for_multiplex(
-                    lambda t_arr: DelayedSine.create(t_arr, rng=rng, lag=10 * param.n_mpx, freq=1.0),
+                    lambda t_arr: DelayedSine.create(t_arr, rng=rng, lag=5 * param.n_mpx, freq=1.0),
                     t_max=param.t_max,
                     n_steps=param.n_steps,
                     n_mpx=param.n_mpx,
@@ -159,7 +159,7 @@ class QRCExperiment:
             dataset = [
                 cls._create_constant_step_time_series(
                     lambda t_arr: LaggedInput.create_with_random_input(
-                        n=len(t_arr), rng=rng, lag=10 * param.n_mpx
+                        n=len(t_arr), rng=rng, lag=5 * param.n_mpx
                     ),
                     t_max=param.t_max,
                     n_steps=param.n_steps,
