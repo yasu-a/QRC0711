@@ -36,11 +36,11 @@ def scorer_fn(p: QRCParam) -> float:
     return run_qrc_experiment(p).test.r2_score_avg
 
 
-def forbid_predicate_fn(param_dict):
-    return (
-            param_dict["obs_x"] is False and
-            param_dict["obs_y"] is False and
-            param_dict["obs_z"] is False
+def constraint_predicate_fn(p: QRCParam) -> bool:
+    return not (
+        p.obs_x is False and
+        p.obs_y is False and
+        p.obs_z is False
     )
 
 
@@ -49,27 +49,27 @@ def main_search():
     searcher = GAParameterSearcher[QRCParam](
         scorer=scorer_fn,
         param_grid=dict(
-            n_qubits=[3, 4, 5],
+            n_qubits=[4],
             gamma_z=[0.1, 0.01, 0.001, 0.0001, 0.00001],
-            n_mpx=np.arange(1, 30, 2),
-            j_mean=np.arange(0.1, 2.0, 0.1),
-            h_mean=np.arange(0.1, 2.0, 0.1),
+            n_mpx=[1, 2, 4, 8, 12, 16, 20],
+            j_mean=[0.1, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0],
+            h_mean=[0.1, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0],
             obs_x=[False, True],
             obs_y=[False, True],
             obs_z=[False, True],
-            n_steps=[200],
-            t_max=[5],
+            n_steps=[300],
+            t_max=[1, 3, 10, 30, 100],
             test_ratio=[0.5],
             n_washout=[50],
-            n_samples_train=[10],
-            n_samples_test=[5],
+            n_samples_train=[4],
+            n_samples_test=[2],
             seed=[0],
             func_type=["lagged_random_uniform"],
         ),
         param_mapper=param_mapper_fn,
-        forbid_predicate=forbid_predicate_fn
+        constraint_predicate=constraint_predicate_fn,
     )
-    best_param, best_score = searcher.search(n_workers=9)
+    best_param, best_score = searcher.search(n_workers=1)
 
     print(f"Best param: {best_param} with R^2={best_score}")
     import pandas as pd
@@ -87,31 +87,17 @@ def main_search():
 def main_show(best_param):
     # 最良パラメータで実験・グラフ表示
     results = run_qrc_experiment(best_param, show_progress=True)
-    # results.plot_state_series()
+    results.plot_state_series()
     results.plot_prediction()
 
 
 def main():
     best_param = main_search()
     # best_param = QRCParam(
-    #     n_qubits=4,
-    #     gamma_z=0.001,
-    #     n_mpx=25,
-    #     j_mean=1.5,
-    #     j_std=0.75,
-    #     h_mean=1.1,
-    #     h_std=0.55,
-    #     n_steps=150,
-    #     obs_x=True,
-    #     obs_y=True,
-    #     obs_z=True,
-    #     t_max=5.0,
-    #     test_ratio=0.5,
-    #     n_washout=30,
-    #     n_samples_train=16,
-    #     n_samples_test=4,
-    #     seed=0,
-    #     func_type="lagged_random_uniform",
+    #     n_qubits=4, gamma_z=0.01, n_mpx=3, j_mean=0.6, j_std=0.3, h_mean=0.1,
+    #     h_std=0.05, n_steps=300, obs_x=True, obs_y=True, obs_z=False, t_max=5.0,
+    #     test_ratio=0.5, n_washout=50, n_samples_train=10, n_samples_test=3,
+    #     seed=0, func_type='lagged_random_uniform',
     # )
     main_show(best_param)
 

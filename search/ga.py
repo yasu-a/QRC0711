@@ -1,5 +1,9 @@
 import concurrent.futures
-from typing import Any, Generic, Callable, Collection, Iterator
+import concurrent.futures
+import warnings
+from collections import OrderedDict
+from collections.abc import Sequence
+from typing import Any, Generic, Callable, Iterator, Iterable
 
 import numpy as np
 from tqdm import tqdm
@@ -7,325 +11,520 @@ from tqdm import tqdm
 from search.base import AbstractParameterSearcher, ParamType
 
 
-class Agent:
-    """遺伝的アルゴリズムのエージェントを表すクラス"""
+class Agent:  # immutable
+    """Class representing an agent in a genetic algorithm."""
 
-    def __init__(self, *, keys: tuple[str, ...], indexes: tuple[int, ...]):
-        self._keys = keys
-        self._indexes = indexes
-
-        # バリデーション
+    def __init__(self, index_it: Iterable[int]):
+        self._indexes = tuple(index_it)
         assert isinstance(self._indexes, tuple), (type(self._indexes), self._indexes)
         assert all(isinstance(gene, int) for gene in self._indexes), self._indexes
-        assert isinstance(self._keys, tuple), (type(self._keys), self._keys)
-        assert len(self._indexes) == len(self._keys), (len(self._indexes), len(self._keys))
 
     def __len__(self) -> int:
+        """Return the number of genes."""
         return len(self._indexes)
 
     def __getitem__(self, index: int) -> int:
+        """Return the gene value at the specified index."""
         return self._indexes[index]
 
-    def __iter__(self):
-        return iter(self._indexes)
-
     def to_list(self) -> list[int]:
-        """リスト形式に変換"""
         return list(self._indexes)
 
-    @classmethod
-    def from_list(cls, *, keys: list[str], indexes: list[int]) -> "Agent":
-        """リストからエージェントを作成"""
-        return cls(keys=tuple(keys), indexes=tuple(indexes))
 
-    def to_param_dict(self, values_lst: dict[str, list[Any]]) -> dict[str, Any]:
-        """エージェントをパラメータ辞書に変換"""
-        param_dict = {}
-        for i, key in enumerate(self._keys):
-            param_dict[key] = values_lst[key][self._indexes[i]]
-        return param_dict
-
-    def crossover(self, other: "Agent", rng: np.random.RandomState) -> tuple["Agent", "Agent"]:
-        """
-        ランダム交叉（Random crossover）
-        親の遺伝子座をランダムに選んで交換する
-        """
-        child1_genes = list(self._indexes)
-        child2_genes = list(other._indexes)
-        for i in range(len(self._indexes)):
-            if rng.random() < 0.5:  # 各遺伝子座で50%の確率で交換
-                child1_genes[i], child2_genes[i] = child2_genes[i], child1_genes[i]
-        return Agent.from_list(keys=list(self._keys), indexes=child1_genes), \
-            Agent.from_list(keys=list(self._keys), indexes=child2_genes)
-
-    def mutate(self, rng: np.random.RandomState, values_lst: dict[str, list[Any]],
-               mutation_rate: float = 0.1) -> "Agent":
-        """
-        突然変異
-        各遺伝子座で突然変異率に基づいてランダムな値に変更
-        """
-        mutated_genes = list(self._indexes)
-        for i, key in enumerate(self._keys):
-            if rng.random() < mutation_rate:
-                # 該当するパラメータの取りうる値の範囲内でランダムに選択
-                mutated_genes[i] = rng.randint(0, len(values_lst[key]))
-
-        return Agent.from_list(keys=list(self._keys), indexes=mutated_genes)
-
-
-class Population:
-    """遺伝的アルゴリズムの集団を表すクラス"""
+class AgentUtil(Generic[ParamType]):
+    """
+    Utility class for handling agents in a genetic algorithm.
+    Provides methods for creating, mutating, crossing over, and evaluating agents.
+    """
 
     def __init__(
             self,
             *,
-            agents: list[Agent],
-            values_lst: dict[str, list[Any]],
-            param_mapper: Callable[[dict[str, Any]], ParamType],
+            domain: OrderedDict[str, Sequence[Any]],
             rng: np.random.RandomState,
-            is_forbidden_predicate: Callable[[dict[str, Any]], bool] | None = None,
+            is_feasible: Callable[[ParamType], bool],
+            param_mapper: Callable[[dict[str, Any]], ParamType],
+            param_scorer: Callable[[ParamType], float],
     ):
-        self._agents = agents
-        self._values_lst = values_lst
-        self._param_mapper = param_mapper
-        self._rng = rng
-        self._is_forbidden_predicate = is_forbidden_predicate
-        self._scores: dict[Agent, float] = {}
+        """
+        Initialize the AgentUtil.
 
-    @classmethod
-    def generate_random(
-            cls,
+        Args:
+            domain: OrderedDict mapping parameter names to lists of possible values.
+            rng: Random number generator (numpy RandomState).
+            is_feasible: Function to check if a parameter set is feasible.
+            param_mapper: Function to map a parameter dictionary to a parameter object.
+            param_scorer: Function to score a parameter object.
+        """
+        assert isinstance(domain, OrderedDict), (type(domain), domain)
+        self._domain = domain
+        self._rng = rng
+        self._is_feasible = is_feasible
+        self._param_mapper = param_mapper
+        self._param_scorer = param_scorer
+
+        self._max_attempt_error = 10000  # Maximum number of attempts to generate a feasible agent before raising an error
+        self._max_attempt_warning = 1000  # Number of attempts after which a warning is printed
+
+    def as_param(self, a: Agent) -> ParamType:
+        """
+        Convert an Agent to a parameter dictionary.
+
+        Args:
+            a: The agent to convert.
+
+        Returns:
+            A dictionary mapping parameter names to their values.
+        """
+        # Make _as_dict public so it can be used from Population as well
+        dct = {key: list(values)[a[i]] for i, (key, values) in enumerate(self._domain.items())}
+        return self._param_mapper(dct)
+
+    def is_feasible(self, a: Agent) -> bool:
+        """
+        Check if an agent is feasible.
+
+        Args:
+            a: The agent to check.
+
+        Returns:
+            True if the agent is feasible, False otherwise.
+        """
+        # Check if each gene is within the domain
+        for i, (_, values) in enumerate(self._domain.items()):
+            if a[i] < 0 or len(values) <= a[i]:
+                return False
+        # Check additional feasibility constraints
+        return self._is_feasible(self.as_param(a))
+
+    def eval_score(self, a: Agent) -> float:
+        """
+        Score an agent.
+
+        Args:
+            a: The agent to score.
+
+        Returns:
+            The score as a float.
+        """
+        return self._param_scorer(self.as_param(a))
+
+    def _create_random_impl(self) -> Agent:
+        """
+        Create a random agent (not guaranteed to be feasible).
+
+        Returns:
+            A new Agent instance.
+        """
+        indexes = tuple(int(self._rng.randint(0, len(values))) for values in self._domain.values())
+        return Agent(indexes)
+
+    def create_random(self) -> Agent:
+        """
+        Create a random feasible agent.
+
+        Returns:
+            A feasible Agent instance.
+
+        Raises:
+            RuntimeError: If a feasible agent cannot be created after max attempts.
+        """
+        for attempt in range(self._max_attempt_error):
+            agent = self._create_random_impl()
+            if self.is_feasible(agent):
+                return agent
+            if attempt >= self._max_attempt_warning:
+                warnings.warn(
+                    f"Could not create a feasible agent after {attempt} attempts, continuing to try...",
+                    UserWarning,
+                )
+        raise RuntimeError(
+            f"Failed to create a feasible agent after {self._max_attempt_error} attempts"
+        )
+
+    def _create_from_param_impl(self, param: ParamType) -> Agent:
+        """
+        Create an agent from a parameter object (not guaranteed to be feasible).
+
+        Args:
+            param: The parameter object.
+
+        Returns:
+            An Agent instance.
+
+        Raises:
+            ValueError: If the parameter is not in the domain.
+        """
+        indexes = []
+        for key, values in self._domain.items():
+            if not hasattr(param, key):
+                raise ValueError(f"param.{key} not found")
+            if getattr(param, key) not in values:
+                raise ValueError(
+                    f"param.{key} = {getattr(param, key)} not in domain {list(values)}")
+            indexes.append(values.index(getattr(param, key)))
+        return Agent(tuple(indexes))
+
+    def create_from_param(self, param: ParamType) -> Agent:
+        """
+        Create a feasible agent from a parameter object.
+
+        Args:
+            param: The parameter object.
+
+        Returns:
+            A feasible Agent instance.
+
+        Raises:
+            ValueError: If the parameter is not feasible.
+        """
+        a = self._create_from_param_impl(param)
+        if not self.is_feasible(a):
+            raise ValueError(f"param = {param} is not feasible")
+        return a
+
+    def _crossover_impl(self, a_1: Agent, a_2: Agent) -> tuple[Agent, Agent]:
+        """
+        Perform crossover between two agents (not guaranteed to be feasible).
+
+        Args:
+            a_1: The first parent agent.
+            a_2: The second parent agent.
+
+        Returns:
+            A tuple of two new Agent instances.
+        """
+        assert len(a_1) == len(a_2), (len(a_1), len(a_2))
+        g_1 = a_1.to_list()
+        g_2 = a_2.to_list()
+        for i in range(len(a_1)):
+            if self._rng.random() < 0.5:
+                g_1[i], g_2[i] = g_2[i], g_1[i]
+        c_1, c_2 = Agent(g_1), Agent(g_2)
+        assert len(c_1) == len(c_2) == len(a_1)
+        return c_1, c_2
+
+    def crossover(self, a_1: Agent, a_2: Agent) -> tuple[Agent, Agent]:
+        """
+        Perform crossover between two agents and ensure the result is feasible.
+
+        Args:
+            a_1: The first parent agent.
+            a_2: The second parent agent.
+
+        Returns:
+            A tuple of two feasible Agent instances.
+
+        Raises:
+            RuntimeError: If feasible children cannot be created after max attempts.
+        """
+        for attempt in range(self._max_attempt_error):
+            c_1, c_2 = self._crossover_impl(a_1, a_2)
+            if self.is_feasible(c_1) and self.is_feasible(c_2):
+                return c_1, c_2
+            if attempt >= self._max_attempt_warning:
+                warnings.warn(
+                    f"Could not crossover agents after {attempt} attempts, continuing to try...",
+                    UserWarning,
+                )
+        raise RuntimeError(f"Failed to crossover agents after {self._max_attempt_error} attempts")
+
+    def _mutate_impl(self, a: Agent) -> Agent:
+        """
+        Mutate an agent (not guaranteed to be feasible).
+
+        Args:
+            a: The agent to mutate.
+
+        Returns:
+            A new Agent instance (possibly mutated).
+        """
+        mutated_genes = a.to_list()
+        # Extract indices whose domain has multiple values (i.e., mutable genes)
+        mutable_indices = [i for i, values in enumerate(self._domain.values()) if len(values) > 1]
+        # Randomly select a mutable gene to mutate
+        i = self._rng.choice(mutable_indices)
+        values = list(self._domain.values())[i]
+        current_index = mutated_genes[i]
+        # Select a value different from the current one
+        candidates: list[int] = [idx for idx in range(len(values)) if idx != current_index]
+        mutated_genes[i] = int(self._rng.choice(candidates))
+        # If no mutable indices or mutation occur, return as is
+        new_a = Agent(mutated_genes)
+        assert len(new_a) == len(a)
+        return new_a
+
+    def mutate(self, a: Agent) -> Agent:
+        """
+        Mutate an agent and ensure the result is feasible.
+
+        Args:
+            a: The agent to mutate.
+
+        Returns:
+            A feasible Agent instance.
+
+        Raises:
+            RuntimeError: If a feasible mutated agent cannot be created after max attempts.
+        """
+        for attempt in range(self._max_attempt_error):
+            a = self._mutate_impl(a)
+            if self.is_feasible(a):
+                return a
+            if attempt >= self._max_attempt_warning:
+                warnings.warn(
+                    f"Could not mutate agent after {attempt} attempts, continuing to try...",
+                    UserWarning,
+                )
+        raise RuntimeError(f"Failed to mutate agent after {self._max_attempt_error} attempts")
+
+
+class Population:  # mutable
+    """Class representing a population in a genetic algorithm."""
+
+    def __init__(
+            self,
+            *,
+            agent_util: AgentUtil,
+            rng: np.random.RandomState,
+    ):
+        self._agents: list[Agent] = []
+        self._agent_util = agent_util
+        self._rng = rng
+
+        # Cache of agent scores from the last evaluation (single or parallel)
+        self._score_cache: dict[Agent, float] = {}
+
+    def initialize_population(
+            self,
             *,
             size: int,
-            keys: list[str],
-            values_lst: dict[str, list[Any]],
-            param_mapper: Callable[[dict[str, Any]], ParamType],
-            rng: np.random.RandomState,
-            is_forbidden_predicate: Callable[[dict[str, Any]], bool] | None = None,
-    ) -> "Population":
-        """ランダムな集団を生成"""
-        agents = []
-        attempts = 0
-        max_attempts = size * 10  # 無限ループを防ぐ
+    ) -> None:
+        """
+        Initialize the population with random agents.
 
-        while len(agents) < size and attempts < max_attempts:
-            indexes = []
-            for key in keys:
-                indexes.append(rng.randint(0, len(values_lst[key])))
-            agent = Agent.from_list(keys=keys, indexes=indexes)
+        Args:
+            size: The number of agents in the population. Must be positive and even.
+        """
+        assert size > 0, "size must be greater than 0"
+        assert size % 2 == 0, "size must be even"
 
-            # forbidチェック
-            param_dict = agent.to_param_dict(values_lst)
-            is_forbidden = is_forbidden_predicate(param_dict) if is_forbidden_predicate else False
+        while len(self._agents) < size:
+            agent = self._agent_util.create_random()
+            self._agents.append(agent)
 
-            if not is_forbidden:
-                agents.append(agent)
-            attempts += 1
+    def evaluate_single(self) -> Iterable[tuple[ParamType, float]]:
+        """
+        Evaluate all agents in the population sequentially.
 
-        if len(agents) < size:
-            raise RuntimeError(
-                f"Could not generate enough valid agents. Generated {len(agents)}/{size}")
-
-        return cls(
-            agents=agents,
-            values_lst=values_lst,
-            param_mapper=param_mapper,
-            rng=rng,
-            is_forbidden_predicate=is_forbidden_predicate,
-        )
-
-    def evaluate_parallel(self, scorer: Callable[[ParamType], float], *, n_workers: int) \
-            -> dict[Agent, float]:
-        """集団を評価し、スコアを返す"""
+        Yields:
+            Tuples of (agent, score).
+        """
         scores = {}
-        param_objects_to_eval = []
-        agent_to_param_dict_map = {}
-
         for agent in self._agents:
-            param_dict = agent.to_param_dict(self._values_lst)
-            param_obj = self._param_mapper(param_dict)
-            param_objects_to_eval.append(param_obj)
-            agent_to_param_dict_map[agent] = param_obj
+            score = self._agent_util.eval_score(agent)
+            scores[agent] = score
+            yield agent, score
+        self._score_cache = scores
 
+    def evaluate_parallel(self, n_workers: int) -> Iterable[tuple[ParamType, float]]:
+        """
+        Evaluate all agents in the population in parallel.
+
+        Args:
+            n_workers: Number of worker processes.
+
+        Yields:
+            Tuples of (agent, score).
+        """
+        scores = {}
         with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
-            futures = {executor.submit(scorer, p_obj): (agent, p_obj)
-                       for agent, p_obj in agent_to_param_dict_map.items()}
+            futures = {executor.submit(self._agent_util.eval_score, agent): agent for agent in self._agents}
+            for future in concurrent.futures.as_completed(futures):
+                agent_key = futures[future]
+                try:
+                    score = future.result()
+                except Exception:
+                    warnings.warn(f"Error occurred while evaluating {agent_key}", UserWarning)
+                    raise
+                scores[agent_key] = score
+                yield agent_key, score
+        self._score_cache = scores
 
-            bar = tqdm(concurrent.futures.as_completed(futures), total=len(futures),
-                       desc="[GA] Evaluating Population")
-            try:
-                for future in bar:
-                    agent_key, p_obj = futures[future]
-                    try:
-                        score = future.result()
-                    except Exception:
-                        print("Error occurred while evaluating", p_obj)
-                        raise
-                    scores[agent_key] = score
-                    bar.set_description(f"[GA] Evaluating Population (best={max(scores.values()):.4f})")
-            except KeyboardInterrupt:
-                print("Stopping evaluation ...")
-                executor.shutdown(wait=True, cancel_futures=True)
-                raise
-
-        self._scores = scores
-        return scores
-
-    def selection(self, tournament_size: int) -> list[Agent]:
+    def selection(self, *, total_size: int, tournament_size: int) -> list[tuple[Agent, Agent]]:
         """
-        トーナメント選択により次世代の親を選択する。
-        スコアが高いほど選ばれやすい。
+        Select parents for the next generation using tournament selection.
+        Agents with higher scores are more likely to be selected.
+
+        Args:
+            total_size: Number of parent pairs to select.
+            tournament_size: Number of agents in each tournament.
+
+        Returns:
+            List of tuples, each containing two selected parent agents.
         """
-        selected_parents = []
-        for _ in range(len(self._agents)):
-            # インデックスをランダムに選択してから、対応するエージェントを取得
-            population_indices = list(range(len(self._agents)))
-            tournament_indices = self._rng.choice(population_indices,
-                                                  size=min(tournament_size, len(self._agents)),
-                                                  replace=False)
-            tournament_candidates = [self._agents[i] for i in tournament_indices]
+        assert tournament_size >= 2, "tournament_size must be greater than 2"
+        pop_indexes = list(range(len(self._agents)))
+        selected_parents: list[tuple[Agent, Agent]] = []
+        for _ in range(total_size):
+            # Randomly select indices for the tournament, then get the corresponding agents
+            sub_indexes = self._rng.choice(
+                pop_indexes,
+                size=min(tournament_size, len(pop_indexes)),
+                replace=False,
+            )
+            sub_agents = [self._agents[i] for i in sub_indexes]
+            scores = [self._score_cache[agent] for agent in sub_agents]
+            a_second_index, a_top_index = np.argsort(scores)[-2:]
+            selected_parents.append((sub_agents[a_top_index], sub_agents[a_second_index]))
 
-            # 各候補のスコアを取得し、最も良いスコアを持つ候補を選ぶ
-            best_candidate = None
-            best_score_in_tournament = -float('inf')
+        assert len(selected_parents) == total_size
 
-            for candidate_agent in tournament_candidates:
-                current_score = self._scores.get(candidate_agent, -float('inf'))
-                if current_score > best_score_in_tournament:
-                    best_score_in_tournament = current_score
-                    best_candidate = candidate_agent
-
-            if best_candidate is not None:
-                selected_parents.append(best_candidate)
         return selected_parents
 
-    def evolve(self, *, crossover_rate: float, mutation_rate: float,
-               tournament_size: int) -> "Population":
-        """集団を進化させて新しい集団を生成"""
-        selected_parents = self.selection(tournament_size=tournament_size)
+    def evolve(self, *, crossover_rate: float, mutation_rate: float, tournament_size: int) -> None:
+        """
+        Evolve the population to the next generation.
 
+        Args:
+            crossover_rate: Probability of crossover between parents.
+            mutation_rate: Probability of mutation for each child.
+            tournament_size: Number of agents in each tournament for selection.
+        """
+        assert len(self._agents) % 2 == 0
+        selected_parents \
+            = self.selection(total_size=len(self._agents) // 2, tournament_size=tournament_size)
         next_agents = []
-        # 交叉と突然変異で次世代を生成
-        while len(next_agents) < len(self._agents):
-            # 親を選択
-            parent1_idx = len(next_agents) % len(selected_parents)
-            parent2_idx = (len(next_agents) + 1) % len(selected_parents)
-            parent1 = selected_parents[parent1_idx]
-            parent2 = selected_parents[parent2_idx]
-
-            # crossover_rateに基づいて交叉を実行するかどうかを判定
+        for p_1, p_2 in selected_parents:
             if self._rng.random() < crossover_rate:
-                child1, child2 = parent1.crossover(parent2, self._rng)
+                c_1, c_2 = self._agent_util.crossover(p_1, p_2)
             else:
-                child1, child2 = parent1, parent2  # 交叉しない場合は親をそのまま使用
-
-            # 突然変異を適用
-            mutated_child1 = child1.mutate(self._rng, self._values_lst, mutation_rate)
-            mutated_child2 = child2.mutate(self._rng, self._values_lst, mutation_rate)
-
-            # forbidチェック
-            param_dict1 = mutated_child1.to_param_dict(self._values_lst)
-            param_dict2 = mutated_child2.to_param_dict(self._values_lst)
-
-            is_forbidden1 = self._is_forbidden_predicate(
-                param_dict1) if self._is_forbidden_predicate else False
-            is_forbidden2 = self._is_forbidden_predicate(
-                param_dict2) if self._is_forbidden_predicate else False
-
-            if not is_forbidden1:
-                next_agents.append(mutated_child1)
-            if len(next_agents) < len(self._agents) and not is_forbidden2:
-                next_agents.append(mutated_child2)
-
+                c_1, c_2 = p_1, p_2
+            if self._rng.random() < mutation_rate:
+                c_1 = self._agent_util.mutate(c_1)
+            if self._rng.random() < mutation_rate:
+                c_2 = self._agent_util.mutate(c_2)
+            next_agents.append(c_1)
+            next_agents.append(c_2)
+        # Two children are added for each parent pair, so len(next_agents) is always even.
+        # Since size is even in initialize_population, this assert always holds.
         assert len(self._agents) == len(next_agents)
+        self._agents = next_agents
 
-        return Population(
-            agents=next_agents,
-            values_lst=self._values_lst,
-            param_mapper=self._param_mapper,
-            rng=self._rng,
-            is_forbidden_predicate=self._is_forbidden_predicate,
-        )
+    def iter_param_and_scores(self) -> Iterator[tuple[ParamType, float]]:
+        """
+        Iterator over parameters and their scores for all agents in the last evaluation.
 
-    def iter_agents_and_scores(self) -> Iterator[tuple[Agent, float]]:
-        """エージェントとスコアのイテレータを返す"""
-        yield from self._scores.items()
+        Yields:
+            Tuples of (parameter, score).
+        """
+        for agent, score in self._score_cache.items():
+            param = self._agent_util.as_param(agent)
+            yield param, score
 
 
 class GAParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
     """
-    遺伝的アルゴリズム (GA) を用いたパラメータ探索器。
+    Parameter searcher using Genetic Algorithm (GA).
     """
 
     def __init__(
             self,
             scorer: Callable[[ParamType], float],
-            param_grid: dict[str, Collection[Any]],
+            param_grid: dict[str, Sequence[Any]],
             param_mapper: Callable[[dict[str, Any]], ParamType],
             *,
-            n_pop: int = 30,  # 世代ごとの個体数
-            n_gen: int = 10,  # 世代数
-            mutation_rate: float = 0.1,  # 突然変異率
-            crossover_rate: float = 0.8,  # 交叉率
-            tournament_size: int = 3,  # トーナメント選択のサイズ
-            seed: int | None = None,  # 乱数シード
-            forbid_predicate: Callable[[dict[str, Any]], bool] | None = None,  # 禁止パラメータ
+            n_pop: int = 30,  # Number of individuals per generation
+            n_gen: int = 10,  # Number of generations
+            mutation_rate: float = 0.01,  # Mutation rate
+            crossover_rate: float = 0.9,  # Crossover rate
+            tournament_size: int = 3,  # Tournament selection size
+            seed: int | None = None,  # Random seed
+            constraint_predicate: Callable[[ParamType], bool] | None = None,  # Feasibility predicate
     ):
-        super().__init__(scorer, param_grid, param_mapper, forbid_predicate=forbid_predicate)
-        self.n_pop = n_pop
-        self.n_gen = n_gen
-        self.mutation_rate = mutation_rate
-        self.crossover_rate = crossover_rate
-        self.tournament_size = tournament_size
+        """
+        Initialize the GAParameterSearcher.
+
+        Args:
+            scorer: Function to evaluate the score of a parameter.
+            param_grid: Dictionary mapping parameter names to possible values.
+            param_mapper: Function to map a parameter dictionary to a parameter object.
+            n_pop: Number of individuals per generation.
+            n_gen: Number of generations.
+            mutation_rate: Probability of mutation for each child.
+            crossover_rate: Probability of crossover between parents.
+            tournament_size: Number of agents in each tournament for selection.
+            seed: Random seed for reproducibility.
+            constraint_predicate: Function to check if a parameter set is feasible.
+        """
+        super().__init__(scorer, param_grid, param_mapper,
+                         constraint_predicate=constraint_predicate)
+        self._n_pop = n_pop
+        self._n_gen = n_gen
+        self._mutation_rate = mutation_rate
+        self._crossover_rate = crossover_rate
+        self._tournament_size = tournament_size
 
         if seed is not None:
-            self.rng = np.random.RandomState(seed)
+            self._rng = np.random.RandomState(seed)
         else:
-            self.rng = np.random.RandomState()
-
-        self._values_lst = {key: list(values) for key, values in self._param_grid.items()}
-        self._keys = list(param_grid.keys())
+            self._rng = np.random.RandomState()
 
     def _run_search(self, *, n_workers: int) -> None:
-        # 初期集団を生成
-        current_population = Population.generate_random(
-            size=self.n_pop,
-            keys=self._keys,
-            values_lst=self._values_lst,
-            param_mapper=self._param_mapper,
-            rng=self.rng,
-            is_forbidden_predicate=self._is_forbidden,
+        """
+        Run the genetic algorithm search.
+
+        Args:
+            n_workers: Number of parallel workers to use for evaluation.
+        """
+        # Generate the initial population
+        current_population = Population(
+            agent_util=AgentUtil(
+                domain=OrderedDict(self._param_grid),
+                rng=self._rng,
+                is_feasible=self._is_feasible,
+                param_mapper=self._param_mapper,
+                param_scorer=self._eval_score,
+            ),
+            rng=self._rng,
+        )
+        current_population.initialize_population(
+            size=self._n_pop,
         )
 
-        for generation in range(self.n_gen):
-            # 集団を評価
+        for generation in range(self._n_gen):
+            # Evaluate the current population (single or parallel)
+            if n_workers == 1:
+                it = current_population.evaluate_single()
+            else:
+                it = current_population.evaluate_parallel(n_workers=n_workers)
+            bar = tqdm(it, total=self._n_pop, desc=f"[GA] Evaluating Population (gen={generation+1}, n_workers={n_workers})")
+            scores = {}
             try:
-                current_population.evaluate_parallel(
-                    scorer=self._eval_score,
-                    n_workers=n_workers,
-                )
+                for agent, score in bar:
+                    scores[agent] = score
+                    bar.set_description(f"[GA] Evaluating Population (gen={generation+1}, best={max(scores.values()):.4f})")
             except KeyboardInterrupt:
-                print("KeyboardInterrupt")
+                warnings.warn("KeyboardInterrupt", UserWarning)
                 break
 
-            # 全てのエージェントのパラメータとスコアを記録
-            for agent, score in current_population.iter_agents_and_scores():
-                agent_param_dict = agent.to_param_dict(self._values_lst)
-                agent_param = self._param_mapper(agent_param_dict)
-                self.add_record(agent_param, score)
+            # Record all agents' parameters and scores
+            for param, score in current_population.iter_param_and_scores():
+                self.add_record(param, score)
 
             print(
-                f"Generation {generation + 1}/{self.n_gen}: "
-                f"Best score = {self.best_score:.3f}"
+                f"Generation {generation + 1}/{self._n_gen}\n"
+                f" - best: {self.best_score:.3f}\n"
+                f" - param: {self.best_param!r}"
             )
-            print(self.best_param)
 
-            if generation < self.n_gen - 1:  # 最終世代では次世代を生成しない
-                # 集団を進化させて新しい集団を生成
-                current_population = current_population.evolve(
-                    crossover_rate=self.crossover_rate,
-                    mutation_rate=self.mutation_rate,
-                    tournament_size=self.tournament_size
+            # Do not generate the next generation for the last generation
+            if generation < self._n_gen - 1:
+                # Evolve the population to generate the next generation
+                current_population.evolve(
+                    crossover_rate=self._crossover_rate,
+                    mutation_rate=self._mutation_rate,
+                    tournament_size=self._tournament_size,
                 )
 
         if self.is_empty:
