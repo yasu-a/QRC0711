@@ -11,10 +11,12 @@ class AbstractParameterSearcher(ABC, Generic[ParamType]):
             scorer: Callable[[ParamType], float],
             param_grid: dict[str, Collection[Any]],  # Collection[Any]からlist[Any]に変更
             param_mapper: Callable[[dict[str, Any]], ParamType],
+            forbid: list[dict[str, Any]] | None = None,
     ):
         self.__scorer = scorer
         self._param_grid = param_grid
         self._param_mapper = param_mapper
+        self._forbid = forbid or []
 
         self._history: list[tuple[ParamType, float]] = []  # list of parameters and scores
 
@@ -38,6 +40,13 @@ class AbstractParameterSearcher(ABC, Generic[ParamType]):
         score = self.__scorer(p)
         assert isinstance(score, float), (type(score), score)
         return score
+
+    def _is_forbidden(self, param_dict: dict[str, Any]) -> bool:
+        """パラメータが禁止領域に含まれるかチェック"""
+        for forbidden_config in self._forbid:
+            if all(param_dict[key] == forbidden_value for key, forbidden_value in forbidden_config.items()):
+                return True
+        return False
 
     @abstractmethod
     def _run_search(self, *, n_workers: int) -> None:

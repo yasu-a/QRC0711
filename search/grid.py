@@ -10,10 +10,12 @@ from search.base import AbstractParameterSearcher, ParamType
 class GridParameterSearcher(AbstractParameterSearcher, Generic[ParamType]):
     def _list_param_objects(self) -> list[ParamType]:
         # パラメータの組み合わせを生成
-        return [
-            self._param_mapper(dict(zip(self._param_grid.keys(), values)))
-            for values in itertools.product(*self._param_grid.values())
-        ]
+        param_objects = []
+        for values in itertools.product(*self._param_grid.values()):
+            param_dict = dict(zip(self._param_grid.keys(), values))
+            if not self._is_forbidden(param_dict):
+                param_objects.append(self._param_mapper(param_dict))
+        return param_objects
 
     def _run_search(self, *, n_workers: int) -> None:
         param_objects = self._list_param_objects()

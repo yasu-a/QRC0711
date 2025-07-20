@@ -99,6 +99,9 @@ class QRCParam:
     h_mean: float
     h_std: float
     n_steps: int
+    obs_x: bool
+    obs_y: bool
+    obs_z: bool
     t_max: float
     test_ratio: float
     n_washout: int
@@ -124,6 +127,12 @@ class QRCParam:
             (f"invalid value of `h_std`", type(self.h_std), self.h_std)
         assert isinstance(self.n_steps, int), \
             (f"invalid value of `n_steps`", type(self.n_steps), self.n_steps)
+        assert isinstance(self.obs_x, bool), \
+            (f"invalid value of `obs_x`", type(self.obs_x), self.obs_x)
+        assert isinstance(self.obs_y, bool), \
+            (f"invalid value of `obs_y`", type(self.obs_y), self.obs_y)
+        assert isinstance(self.obs_z, bool), \
+            (f"invalid value of `obs_z`", type(self.obs_z), self.obs_z)
         assert isinstance(self.t_max, (float, int)), \
             (f"invalid value of `t_max`", type(self.t_max), self.t_max)
         assert isinstance(self.test_ratio, float), \

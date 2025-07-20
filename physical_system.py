@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import copy
 from functools import cache
 from typing import Callable
 
@@ -18,6 +19,8 @@ class AbstractPhysicalSystem(ABC):
         raise NotImplementedError()
 
     def __add__(self, other):
+        if other is None:
+            return copy.deepcopy(self)
         if not isinstance(other, AbstractPhysicalSystem):
             return NotImplemented
         if self._kind is None or other._kind is None:
@@ -41,7 +44,9 @@ class ChainedPhysicalSystem(AbstractPhysicalSystem):
         return ham
 
     def __add__(self, other):
-        if isinstance(other, ChainedPhysicalSystem):
+        if other is None:
+            return ChainedPhysicalSystem(self._chain)
+        elif isinstance(other, ChainedPhysicalSystem):
             return ChainedPhysicalSystem(self._chain + other._chain)
         elif isinstance(other, AbstractPhysicalSystem):
             return ChainedPhysicalSystem(self._chain + [other])
