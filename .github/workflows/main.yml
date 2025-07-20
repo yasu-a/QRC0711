@@ -37,14 +37,14 @@ jobs:
       # Test results processing
       - name: Store test results
         if: always()
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: pytest-results-python-${{ env.PYTHON_VERSION }}
           path: ${{ env.TEST_RESULTS_DIR }}/*.xml
 
       - name: Retrieve test artifacts
         if: always()
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
