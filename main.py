@@ -1,13 +1,15 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 import numpy as np
-from sklearn.linear_model import LinearRegression, Lasso
+import pandas as pd
+from sklearn.linear_model import LinearRegression
 from tqdm import tqdm
 
 from model import QRCExperimentResult, QRCStateTimeStep, QRCStateSeries, QRCExperimentResultEntry, \
     QRCParam, AbstractStateSeries
 from physical_system import NVReservoirObservable, NVReservoirCollapseOperator, \
     NVReservoirPhysicsSystem
+from search.ga import GAParameterSearcher
 from time_evol_solver import TimeEvolutionSolver
 from utils.axis import Axis
 from utils.dataset import DelayedSine, to_continuous_function_with_linspace_time
@@ -43,10 +45,13 @@ def create_oversampled_time_series_for_multiplex(dataset_gen, *, t_max, n_steps,
     t_arr = np.linspace(0, t_max, n_steps + 1)  # オーバーサンプルなし
     t_mpx_arr = np.linspace(0, t_max, n_steps * n_mpx + 1)  # オーバーサンプルあり
     assert np.allclose(t_arr, t_mpx_arr[::n_mpx])
+    t_mpx_arr[::n_mpx] = t_arr  # avoid failure on np.isin
     u_mpx_arr, y_mpx_arr = dataset_gen(t_mpx_arr)
     u_t = to_continuous_function_with_linspace_time(t_mpx_arr, u_mpx_arr)
     mask = np.isin(t_mpx_arr, t_arr)
+    assert np.count_nonzero(mask) == len(t_arr), (np.count_nonzero(mask), len(t_arr))
     u_arr, y_arr = u_mpx_arr[mask], y_mpx_arr[mask]
+    assert len(u_arr) == len(y_arr) == len(t_arr), (len(u_arr), len(y_arr), len(t_arr))
     return u_arr, y_arr, t_arr, u_t
 
 
@@ -144,12 +149,13 @@ def run_qrc_experiment(p: QRCParam, *, show_progress=False) -> QRCExperimentResu
 
         # 訓練データのQRC状態系列を計算
         solver.reset_rho()
-        t_all_out, states = get_time_evol_states(
+        t_arr_out, states = get_time_evol_states(
             p.n_mpx, u_t, t_arr, solver,
             n_washout=p.n_washout,
             tqdm_title=f"train #{i}" if show_progress else None,
         )
-        mask = np.isin(t_arr, t_all_out)
+
+        mask = np.isin(t_arr, t_arr_out)
         t_arr = t_arr[mask]
         u_arr = u_arr[mask]
         y_arr = y_arr[mask]
@@ -256,29 +262,50 @@ def run_qrc_experiment(p: QRCParam, *, show_progress=False) -> QRCExperimentResu
     )
 
 
+# パラメータ探索グリッド
+def param_mapper_fn(d: dict) -> QRCParam:
+    return QRCParam(
+        n_qubits=int(d["n_qubits"]),
+        gamma_z=float(d["gamma_z"]),
+        n_mpx=int(d["n_mpx"]),
+        j_mean=float(d["j_mean"]),
+        j_std=float(d["j_mean"] / 2),
+        h_mean=float(d["h_mean"]),
+        h_std=float(d["h_mean"] / 2),
+        n_steps=int(d["n_steps"]),
+        t_max=float(d["t_max"]),
+        test_ratio=float(d["test_ratio"]),
+        n_washout=int(d["n_washout"]),
+        n_samples_train=int(d["n_samples_train"]),
+        n_samples_test=int(d["n_samples_test"]),
+        seed=int(d["seed"]),
+    )
+
+
+def scorer_fn(p: QRCParam) -> float:
+    return run_qrc_experiment(p).test.r2_score_avg
+
+
 def main():
-    # # パラメータ探索グリッド
-    # param_grid = {
-    #     'n_qubits': [6],
-    #     'gamma_z': [0.001, 0.0001, 0.00001],
-    #     'n_mpx': [1, 2, 4, 8],
-    #     'j_mean': [0.5, 1.0, 5.0],
-    #     'j_std': [0.5, 1.0, 2.0],
-    #     'h_mean': [0.25, 0.5, 2.5],
-    #     'h_std': [0.175, 0.25, 1.75],
-    #     'n_steps': [500],
-    #     't_max': [30],
-    #     'test_ratio': [0.3],
-    #     'n_washout': [10],
-    #     'n_lr_train_washout': [20],
-    #     'seed': [0],
-    # }
-    # searcher = AbstractParameterSearcher[QRCParam](
-    #     scorer=lambda p: run_qrc_experiment(p).test.r2_score,
-    #     param_grid=param_grid,
-    #     param_mapper=lambda d: QRCParam(**d),
+    # searcher = GAParameterSearcher[QRCParam](
+    #     scorer=scorer_fn,
+    #     param_grid=dict(
+    #         n_qubits=[4],
+    #         gamma_z=[0.1, 0.01, 0.001, 0.0001, 0.00001],
+    #         n_mpx=[1, 2, 4, 6, 8, 10],
+    #         j_mean=np.arange(0.1, 2.0, 0.1),
+    #         h_mean=np.arange(0.1, 2.0, 0.1),
+    #         n_steps=[150],
+    #         t_max=[5],
+    #         test_ratio=[0.5],
+    #         n_washout=[20],
+    #         n_samples_train=[8],
+    #         n_samples_test=[4],
+    #         seed=[0],
+    #     ),
+    #     param_mapper=param_mapper_fn,
     # )
-    # best_param, best_score = searcher.search(n_workers=4)
+    # best_param, best_score = searcher.search(n_workers=6)
     #
     # print(f"Best param: {best_param} with R^2={best_score}")
     # df = pd.DataFrame([{**asdict(p), "_score": score} for p, score in searcher.history])
@@ -299,7 +326,7 @@ def main():
         t_max=5,
         test_ratio=0.5,
         n_washout=20,
-        n_samples_train=16,
+        n_samples_train=8,
         n_samples_test=4,
         seed=0,
     )
