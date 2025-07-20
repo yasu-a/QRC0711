@@ -1,6 +1,7 @@
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import os
+from functools import reduce
 
 import numpy as np
 from sklearn.linear_model import LinearRegression
@@ -12,7 +13,7 @@ from physical_system import NVReservoirObservable, NVReservoirCollapseOperator, 
     NVReservoirPhysicsSystem
 from time_evol_solver import TimeEvolutionSolver
 from utils.axis import Axis
-from utils.dataset import DelayedSine, to_continuous_function_with_linspace_time
+from utils.dataset import DelayedSine, LaggedInput, to_continuous_function_with_linspace_time
 from utils.fullstate import fullstate
 
 
@@ -125,12 +126,12 @@ class QRCExperiment:
             seed=param.seed,
         )
 
-        from functools import reduce
         solver = TimeEvolutionSolver(
             system=system,
             observable=reduce(lambda x, y: x + y, [
                 NVReservoirObservable(n_qubit=param.n_qubits, axis=axis)
-                for is_enabled, axis in [(param.obs_x, Axis.X), (param.obs_y, Axis.Y), (param.obs_z, Axis.Z)]
+                for is_enabled, axis in
+                [(param.obs_x, Axis.X), (param.obs_y, Axis.Y), (param.obs_z, Axis.Z)]
                 if is_enabled
             ]),
             collapse_operator=NVReservoirCollapseOperator(n_qubit=param.n_qubits,
@@ -142,8 +143,7 @@ class QRCExperiment:
         rng = np.random.RandomState(seed=param.seed)
         dataset = [
             cls._create_oversampled_time_series_for_multiplex(
-                lambda t_arr: DelayedSine.create(t_arr, rng=rng, lag=10 * param.n_mpx,
-                                                 freq=1.0),
+                lambda t_arr: DelayedSine.create(t_arr, rng=rng, lag=10 * param.n_mpx, freq=1.0),
                 t_max=param.t_max,
                 n_steps=param.n_steps,
                 n_mpx=param.n_mpx,
@@ -357,7 +357,7 @@ def main():
         ]
     )
     best_param, best_score = searcher.search(n_workers=9)
-    
+
     print(f"Best param: {best_param} with R^2={best_score}")
     import pandas as pd
     df = pd.DataFrame([{**asdict(p), "_score": score} for p, score in searcher.history])
@@ -365,31 +365,29 @@ def main():
     with pd.option_context('display.max_columns', None, 'display.width', None):
         print(df)
     os.makedirs('./results', exist_ok=True)
-    df.to_csv(f'./results/qrc_param_search_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv', index=False)
+    df.to_csv(f'./results/qrc_param_search_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+              index=False)
 
     # 最良パラメータで実験・グラフ表示
     # best_param = QRCParam(
     #     n_qubits=4,
     #     gamma_z=0.001,
-    #     n_mpx=4,
-    #     j_mean=1.0,
-    #     j_std=0.3,
-    #     h_mean=1.0,
-    #     h_std=0.3,
+    #     n_mpx=2,
+    #     j_mean=1.5,
+    #     j_std=0.75,
+    #     h_mean=1.1,
+    #     h_std=0.55,
     #     n_steps=150,
     #     obs_x=True,
     #     obs_y=True,
     #     obs_z=True,
-    #     t_max=5,
+    #     t_max=5.0,
     #     test_ratio=0.5,
-    #     n_washout=20,
+    #     n_washout=50,
     #     n_samples_train=8,
     #     n_samples_test=4,
     #     seed=0,
     # )
-    best_param = QRCParam(n_qubits=4, gamma_z=0.0001, n_mpx=4, j_mean=0.6, j_std=0.3, h_mean=0.9,
-                          h_std=0.45, n_steps=150, obs_x=False, obs_y=True, obs_z=True, t_max=5.0,
-                          test_ratio=0.5, n_washout=5, n_samples_train=8, n_samples_test=4, seed=0)
     results = run_qrc_experiment(best_param, show_progress=True)
     # results.plot_state_series()
     results.plot_prediction()

@@ -153,6 +153,20 @@ class DelayedSine(TimeMappedDatasetGenerator):
         return u_arr, y_arr
 
 
+class LaggedInput(RandomInputSignalMappedDatasetGenerator):
+    """
+    入力信号を遅延させたデータセット。
+    """
+
+    def __init__(self, lag: int = 1):
+        self.lag = lag
+
+    def __call__(self, u_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        y_arr = np.zeros_like(u_arr)
+        y_arr[self.lag:] = u_arr[:-self.lag]
+        return u_arr, y_arr
+
+
 def train_test_split(
         u_arr, y_arr, t_arr=None,
         /,
