@@ -9,7 +9,7 @@ from search.grid import GridParameterSearcher
 
 
 @dataclass
-class TestParamType:
+class _TestParamType:
     a: int
     b: int
     c: int
@@ -33,7 +33,7 @@ def display_history(search):
 
 
 def _param_mapper(x):
-    return TestParamType(**x)
+    return _TestParamType(**x)
 
 
 def _param_scorer(x):
@@ -48,13 +48,13 @@ _param_grid: dict[str, list[Any]] = dict(
     e=["a", "aa", "aaa", "aaaa"],
 )
 
-_expected_best_param_no_constraint = TestParamType(a=4, b=40, c=400, d=0.4, e="aaaa")
+_expected_best_param_no_constraint = _TestParamType(a=4, b=40, c=400, d=0.4, e="aaaa")
 _expected_best_score_no_constraint = 448.4
 
 
 @pytest.mark.parametrize("n_workers", [1, 2])
 def test_grid_search_no_constraint(n_workers):
-    search = GridParameterSearcher[TestParamType](
+    search = GridParameterSearcher[_TestParamType](
         param_grid=_param_grid,  # type: ignore
         param_mapper=_param_mapper,
         scorer=_param_scorer,
@@ -67,7 +67,7 @@ def test_grid_search_no_constraint(n_workers):
 
 @pytest.mark.parametrize("n_workers", [1, 2])
 def test_ga_search_no_constraint(n_workers):
-    search = GAParameterSearcher[TestParamType](
+    search = GAParameterSearcher[_TestParamType](
         param_grid=_param_grid,  # type: ignore
         param_mapper=_param_mapper,
         scorer=_param_scorer,
@@ -86,7 +86,7 @@ def test_ga_search_no_constraint(n_workers):
 
 
 def test_ga_search_no_constraint_two_point_crossover():
-    search = GAParameterSearcher[TestParamType](
+    search = GAParameterSearcher[_TestParamType](
         param_grid=_param_grid,  # type: ignore
         param_mapper=_param_mapper,
         scorer=_param_scorer,
@@ -104,7 +104,7 @@ def test_ga_search_no_constraint_two_point_crossover():
     display_history(search)
 
 
-def _constraint_predicate_fn(p: TestParamType) -> bool:
+def _constraint_predicate_fn(p: _TestParamType) -> bool:
     if p.e == "aa":
         return False
     if (p.a == 3
@@ -118,13 +118,13 @@ def _constraint_predicate_fn(p: TestParamType) -> bool:
     return True
 
 
-_expected_best_param_with_constraint = TestParamType(a=4, b=30, c=400, d=0.4, e="aaaa")
+_expected_best_param_with_constraint = _TestParamType(a=4, b=30, c=400, d=0.4, e="aaaa")
 _expected_best_score_with_constraint = 438.4
 
 
 @pytest.mark.parametrize("n_workers", [1, 2])
 def test_grid_search_with_constraint(n_workers):
-    search = GridParameterSearcher[TestParamType](
+    search = GridParameterSearcher[_TestParamType](
         param_grid=_param_grid,  # type: ignore
         param_mapper=_param_mapper,
         scorer=_param_scorer,
@@ -138,7 +138,7 @@ def test_grid_search_with_constraint(n_workers):
 
 @pytest.mark.parametrize("n_workers", [1, 2])
 def test_ga_search_with_constraint(n_workers):
-    search = GAParameterSearcher[TestParamType](
+    search = GAParameterSearcher[_TestParamType](
         param_grid=_param_grid,  # type: ignore
         param_mapper=_param_mapper,
         scorer=_param_scorer,

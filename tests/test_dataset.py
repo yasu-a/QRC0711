@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from utils.dataset import Narma, to_continuous_function, DelayedSine
-from utils.dataset import train_test_split
+from utils.dataset_v1 import Narma, to_continuous_function, DelayedSine
+from utils.dataset_v1 import train_test_split
 
 
 def _create_narma_10(u_arr):

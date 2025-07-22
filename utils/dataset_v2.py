@@ -99,7 +99,7 @@ class AbstractDiscreteDataset(AbstractDataset, ABC):
     @property
     def u_t(self) -> _Continuous:
         def u_t(t: _Discrete) -> _Discrete:
-            idx = np.floor(np.asarray(t) / self._t_step + 1e-15).astype(int)
+            idx = np.floor(np.asarray(t) / self._t_step + 1e-11).astype(int)
             return self.u_arr[idx]
 
         return u_t
@@ -107,7 +107,7 @@ class AbstractDiscreteDataset(AbstractDataset, ABC):
     @property
     def y_t(self) -> _Continuous:
         def y_t(t: _Discrete) -> _Discrete:
-            idx = np.floor(np.asarray(t) / self._t_step + 1e-15).astype(int)
+            idx = np.floor(np.asarray(t) / self._t_step + 1e-11).astype(int)
             return self.y_arr[idx]
 
         return y_t
@@ -254,6 +254,133 @@ class ParityCheckDataset(AbstractDiscreteDataset):  # 本質的に離散的な�
         for k in range(self._window_size, len(self.u_arr)):
             y_arr[k] = np.sum(self.u_arr[k - self._window_size:k]) % 2
         return y_arr
+
+
+class NarmaDataset(AbstractDiscreteDataset):
+    """
+    NARMAタスクのデータセット。
+    本質的に離散的なデータセット。
+    u_arr: 入力系列（ランダム一様分布）
+    y_arr: NARMA方程式で生成される出力系列
+    """
+    def __init__(
+        self,
+        *,
+        t_max: float,
+        t_step: float,
+        n: int = 10,
+        a: float = 0.3,
+        b: float = 0.05,
+        c: float = 1.5,
+        d: float = 0.1,
+        low: float = 0.0,
+        high: float = 0.5,
+        seed: int | None = None,
+        rng: np.random.RandomState | None = None,
+    ):
+        super().__init__(t_max=t_max, t_step=t_step)
+        self._n = n
+        self._a = a
+        self._b = b
+        self._c = c
+        self._d = d
+        self._low = low
+        self._high = high
+        self._rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
+        self._series = self._rng.uniform(self._low, self._high, len(self.t_arr))
+
+    @property
+    def u_arr(self) -> _Discrete:
+        return self._series
+
+    @property
+    def y_arr(self) -> _Discrete:
+        y_arr = np.zeros_like(self.u_arr)
+        n = self._n
+        a = self._a
+        b = self._b
+        c = self._c
+        d = self._d
+        u = self.u_arr
+        for k in range(n - 1, len(u) - 1):
+            y_arr[k + 1] = (
+                a * y_arr[k]
+                + b * y_arr[k] * np.sum(y_arr[k - n + 1:k + 1])
+                + c * u[k] * u[k - n + 1]
+                + d
+            )
+        return y_arr
+
+
+def train_test_split(
+        u_arr, y_arr, t_arr=None,
+        /,
+        test_ratio=0.3,
+        n_washout: int | None = None,
+        n_train_washout: int | None = None,
+        n_test_washout: int | None = None,
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    """
+    データを訓練・テストに分割する関数。
+
+    - 先頭からn_train_washout個分を除外
+    - trainとtestの間にn_test_washout個分のwashoutを挟む
+    - n_washoutを指定した場合はn_train_washout, n_test_washout両方に同じ値をセット
+    - どれも指定しない場合はwashoutなし
+    - n_washoutとn_train_washout/n_test_washoutを同時指定はエラー
+    - 残りをtest_ratioの比率でtrain/testに分割
+
+    Args:
+        u_arr (np.ndarray): 入力データ配列
+        y_arr (np.ndarray): 出力データ配列
+        t_arr (np.ndarray): 時刻データ配列（省略可）
+        test_ratio (float): train/test分割比率 (0.0-1.0, testの割合)
+        n_washout (int|None): train/test両方のwashout数
+        n_train_washout (int|None): 先頭のwashout数
+        n_test_washout (int|None): trainとtestの間のwashout数
+
+    Returns:
+        tuple: (u_train, u_test), (y_train, y_test), (t_train, t_test)
+        ただし時刻データ配列未指定なら(u_train, u_test), (y_train, y_test)
+    """
+    if len(u_arr) != len(y_arr):
+        raise ValueError("u_arr and y_arr must have the same length")
+
+    # washout指定の解釈
+    if n_washout is not None:
+        if n_train_washout is not None or n_test_washout is not None:
+            raise ValueError(
+                "n_washoutとn_train_washout/n_test_washoutを同時に指定することはできません")
+        n_train_washout = n_washout
+        n_test_washout = n_washout
+    else:
+        if n_train_washout is None:
+            n_train_washout = 0
+        if n_test_washout is None:
+            n_test_washout = 0
+
+    n_total = len(u_arr)
+    n_remain = n_total - n_train_washout - n_test_washout
+    n_test = int(n_remain * test_ratio)
+    n_train = n_remain - n_test
+
+    assert n_train >= 1, f"n_train={n_train} が1未満です。データ数や比率を見直してください。"
+    assert n_test >= 1, f"n_test={n_test} が1未満です。データ数や比率を見直してください。"
+
+    train_start = n_train_washout
+    train_end = train_start + n_train
+    test_start = train_end + n_test_washout
+    test_end = test_start + n_test
+
+    u_train = u_arr[train_start:train_end]
+    y_train = y_arr[train_start:train_end]
+    u_test = u_arr[test_start:test_end]
+    y_test = y_arr[test_start:test_end]
+    if t_arr is not None:
+        t_train = t_arr[train_start:train_end]
+        t_test = t_arr[test_start:test_end]
+        return (u_train, u_test), (y_train, y_test), (t_train, t_test)
+    return (u_train, u_test), (y_train, y_test)
 
 
 def _preview_dataset():
