@@ -1,7 +1,7 @@
 # https://qiita.com/vZke/items/868eb9fd5289d2a25660
 
 name: Run Pytest
-on: [push]
+on: [ push ]
 
 jobs:
   pytest:

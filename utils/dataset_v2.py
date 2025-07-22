@@ -47,7 +47,7 @@ Discrete = np.ndarray | float
 Continuous = Callable[[Discrete], Discrete]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True)
 class Dataset:
     name: str
     parameters: dict[str, Any]
@@ -236,7 +236,11 @@ class NoisyDelayedSineDatasetGenerator(DelayedSineDatasetGenerator):
 
         def u_t(t: Discrete) -> Discrete:
             a = super_u_t(t)
-            return a + self._rng.normal(0, self._noise_std, len(a))
+            if not isinstance(t, np.ndarray):
+                r = float(a + self._rng.normal(0, self._noise_std))
+            else:
+                r = a + self._rng.normal(0, self._noise_std, len(a))
+            return r
 
         return u_t
 
@@ -246,7 +250,11 @@ class NoisyDelayedSineDatasetGenerator(DelayedSineDatasetGenerator):
 
         def y_t(t: Discrete) -> Discrete:
             a = super_y_t(t)
-            return a + self._rng.normal(0, self._noise_std, len(a))
+            if not isinstance(t, np.ndarray):
+                r = float(a + self._rng.normal(0, self._noise_std))
+            else:
+                r = a + self._rng.normal(0, self._noise_std, len(a))
+            return r
 
         return y_t
 

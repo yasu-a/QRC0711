@@ -4,9 +4,12 @@ from typing import Any
 import numpy as np
 import pytest
 
-from utils.dataset_v2 import AbstractDiscreteDatasetGenerator, DelayedRandomDatasetGenerator, DelayedSineDatasetGenerator, \
+from utils.dataset_v2 import AbstractDiscreteDatasetGenerator, DelayedRandomDatasetGenerator, \
+    DelayedSineDatasetGenerator, \
     ParityCheckDatasetGenerator, NoisyDelayedSineDatasetGenerator, NarmaDatasetGenerator
 
+
+# TODO: u_t, y_t: Continuousにスカラー値を入れた時のテストを追加
 
 class _TestDiscreteDataset(AbstractDiscreteDatasetGenerator):
     def __init__(self, *, t_max: float, t_step: float):

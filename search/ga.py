@@ -229,11 +229,11 @@ class AgentUtil(Generic[ParamType]):
         return c_1, c_2
 
     def crossover(
-        self,
-        a_1: Agent,
-        a_2: Agent,
-        *,
-        crossover_type: Literal["uniform", "two-point"],
+            self,
+            a_1: Agent,
+            a_2: Agent,
+            *,
+            crossover_type: Literal["uniform", "two-point"],
     ) -> tuple[Agent, Agent]:
         """
         Perform crossover between two agents and ensure the result is feasible.
@@ -421,12 +421,12 @@ class Population:  # mutable
         return selected_parents
 
     def evolve(
-        self,
-        *,
-        crossover_rate: float,
-        crossover_type: Literal["uniform", "two-point"],
-        mutation_rate: float,
-        tournament_size: int,
+            self,
+            *,
+            crossover_rate: float,
+            crossover_type: Literal["uniform", "two-point"],
+            mutation_rate: float,
+            tournament_size: int,
     ) -> None:
         """
         Evolve the population to the next generation.

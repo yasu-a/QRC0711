@@ -1,125 +1,151 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from functools import reduce
+from functools import reduce, cache
+from typing import Callable, Iterable
 
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from tqdm import tqdm
 
-from model import AbstractStateSeries, QRCParam, QRCStateTimeStep, QRCStateSeries, \
-    QRCExperimentResultEntry, QRCExperimentResult
+from model import AbstractStateSeries, NVQRCParam, QRCStateTimeStep, QRCStateSeries
 from physical_system import NVReservoirPhysicsSystem, NVReservoirObservable, \
-    NVReservoirCollapseOperator
+    NVReservoirCollapseOperator, AbstractPhysicalSystem
 from time_evol_solver import TimeEvolutionSolver
 from utils.axis import Axis
-from utils.dataset import to_continuous_function_with_linspace_time, DelayedSine, LaggedInput
+from utils.dataset_v2 import AbstractDatasetGenerator, Dataset, Discrete, Continuous
 from utils.fullstate import fullstate
+from utils.score import score_func_by_name, ScoreName
 
 
 @dataclass(slots=True)
-class ForwardResult:
-    t: np.ndarray  # (T,)
-    u: np.ndarray  # (T, n_in)
+class StateComputationResult:
+    t_arr: np.ndarray  # (T,)
+    u_mlt_arr: np.ndarray  # (T, n_in)
     states: AbstractStateSeries  # length: T
-    y: np.ndarray  # (T, n_out)
+    y_mlt_arr: np.ndarray  # (T, n_out)
 
     # noinspection DuplicatedCode
     def __post_init__(self):
-        assert isinstance(self.t, np.ndarray), (type(self.t), self.t)
-        assert isinstance(self.u, np.ndarray), (type(self.u), self.u)
+        assert isinstance(self.t_arr, np.ndarray), (type(self.t_arr), self.t_arr)
+        assert isinstance(self.u_mlt_arr, np.ndarray), (type(self.u_mlt_arr), self.u_mlt_arr)
         assert isinstance(self.states, AbstractStateSeries), (type(self.states), self.states)
-        assert isinstance(self.y, np.ndarray), (type(self.y), self.y)
+        assert isinstance(self.y_mlt_arr, np.ndarray), (type(self.y_mlt_arr), self.y_mlt_arr)
 
-        n_t = len(self.t)
-        assert self.t.ndim == 1, self.t.shape
-        assert self.u.ndim == 2, self.u.shape
-        assert self.u.shape[0] == n_t, (self.u.shape[0], n_t)
+        n_t = len(self.t_arr)
+        assert self.t_arr.ndim == 1, self.t_arr.shape
+        assert self.u_mlt_arr.ndim == 2, self.u_mlt_arr.shape
+        assert self.u_mlt_arr.shape[0] == n_t, (self.u_mlt_arr.shape[0], n_t)
         assert len(self.states) == n_t, (len(self.states), n_t)
-        assert self.y.ndim == 2, self.y.shape
-        assert self.y.shape[0] == n_t, (self.y.shape[0], n_t)
+        assert self.y_mlt_arr.ndim == 2, self.y_mlt_arr.shape
+        assert self.y_mlt_arr.shape[0] == n_t, (self.y_mlt_arr.shape[0], n_t)
+
+        # copy arrays and make readonly
+        self.t_arr = self.t_arr.copy()
+        self.t_arr.setflags(write=False)
+        self.u_mlt_arr = self.u_mlt_arr.copy()
+        self.u_mlt_arr.setflags(write=False)
+        self.y_mlt_arr = self.y_mlt_arr.copy()
+        self.y_mlt_arr.setflags(write=False)
 
 
 @dataclass(slots=True)
-class RegressionResult:
-    t: np.ndarray  # (T,)
-    u: np.ndarray  # (T, n_in)
+class PredictionResult:
+    t_arr: np.ndarray  # (T,)
+    u_mlt_arr: np.ndarray  # (T, n_in)
     states: AbstractStateSeries  # length: T
-    y: np.ndarray  # (T, n_out)
-    y_pred: np.ndarray  # (T, n_out)
-    r2_score: float
+    y_mlt_arr: np.ndarray  # (T, n_out)
+    y_pred_mlt_arr: np.ndarray  # (T, n_out)
 
     # noinspection DuplicatedCode
     def __post_init__(self):
-        assert isinstance(self.t, np.ndarray), (type(self.t), self.t)
-        assert isinstance(self.u, np.ndarray), (type(self.u), self.u)
+        assert isinstance(self.t_arr, np.ndarray), (type(self.t_arr), self.t_arr)
+        assert isinstance(self.u_mlt_arr, np.ndarray), (type(self.u_mlt_arr), self.u_mlt_arr)
         assert isinstance(self.states, AbstractStateSeries), (type(self.states), self.states)
-        assert isinstance(self.y, np.ndarray), (type(self.y), self.y)
-        assert isinstance(self.y_pred, np.ndarray), (type(self.y_pred), self.y_pred)
+        assert isinstance(self.y_mlt_arr, np.ndarray), (type(self.y_mlt_arr), self.y_mlt_arr)
+        assert isinstance(self.y_pred_mlt_arr, np.ndarray), (type(self.y_pred_mlt_arr),
+                                                             self.y_pred_mlt_arr)
 
-        n_t = len(self.t)
-        assert self.t.ndim == 1, self.t.shape
-        assert self.u.ndim == 2, self.u.shape
-        assert self.u.shape[0] == n_t, (self.u.shape[0], n_t)
+        n_t = len(self.t_arr)
+        assert self.t_arr.ndim == 1, self.t_arr.shape
+        assert self.u_mlt_arr.ndim == 2, self.u_mlt_arr.shape
+        assert self.u_mlt_arr.shape[0] == n_t, (self.u_mlt_arr.shape[0], n_t)
         assert len(self.states) == n_t, (len(self.states), n_t)
-        assert self.y.ndim == 2, self.y.shape
-        assert self.y.shape[0] == n_t, (self.y.shape[0], n_t)
-        assert self.y_pred.ndim == 2, self.y_pred.shape
-        assert self.y_pred.shape[0] == n_t, (self.y_pred.shape[0], n_t)
-        assert self.r2_score is not None, self.r2_score
+        assert self.y_mlt_arr.ndim == 2, self.y_mlt_arr.shape
+        assert self.y_mlt_arr.shape[0] == n_t, (self.y_mlt_arr.shape[0], n_t)
+        assert self.y_pred_mlt_arr.ndim == 2, self.y_pred_mlt_arr.shape
+        assert self.y_pred_mlt_arr.shape[0] == n_t, (self.y_pred_mlt_arr.shape[0], n_t)
 
+        # copy arrays and make readonly
+        self.t_arr = self.t_arr.copy()
+        self.t_arr.setflags(write=False)
+        self.u_mlt_arr = self.u_mlt_arr.copy()
+        self.u_mlt_arr.setflags(write=False)
+        self.y_mlt_arr = self.y_mlt_arr.copy()
+        self.y_mlt_arr.setflags(write=False)
+        self.y_pred_mlt_arr = self.y_pred_mlt_arr.copy()
+        self.y_pred_mlt_arr.setflags(write=False)
 
-class QRCExperiment:
-    """QRC実験を実行するクラス"""
-
-    def __init__(
+    @cache
+    def score(
             self,
-            *,
-            system: NVReservoirPhysicsSystem,
-            solver: TimeEvolutionSolver,
-            dataset_train: list,
-            dataset_test: list,
-            n_samples_train: int,
-            n_samples_test: int,
-            n_mpx: int,
-            n_washout: int,
-    ):
-        self._system = system
-        self._solver = solver
-        self._dataset_train = dataset_train
-        self._dataset_test = dataset_test
-        self._lr_model = LinearRegression()
+            score: ScoreName,
+    ) -> np.ndarray:
+        """
+        このPredictionResultインスタンスの予測結果に対するスコアを計算する。
 
-        self._n_samples_train = n_samples_train
-        self._n_samples_test = n_samples_test
-        self._n_mpx = n_mpx
-        self._n_washout = n_washout
+        Args:
+            score (Literal["r2", "capacity", "mse"]): 計算するスコアの種類
 
-    @staticmethod
-    def _create_oversampled_time_series_for_multiplex(dataset_gen, *, t_max, n_steps, n_mpx):
-        """オーバーサンプルされた時系列データを作成"""
-        t_arr = np.linspace(0, t_max, n_steps + 1)  # オーバーサンプルなし
-        t_mpx_arr = np.linspace(0, t_max, n_steps * n_mpx + 1)  # オーバーサンプルあり
-        assert np.allclose(t_arr, t_mpx_arr[::n_mpx])
-        t_mpx_arr[::n_mpx] = t_arr  # avoid failure on np.isin
-        u_mpx_arr, y_mpx_arr = dataset_gen(t_mpx_arr)
-        u_t = to_continuous_function_with_linspace_time(t_mpx_arr, u_mpx_arr)
-        mask = np.isin(t_mpx_arr, t_arr)
-        assert np.count_nonzero(mask) == len(t_arr), (np.count_nonzero(mask), len(t_arr))
-        u_arr, y_arr = u_mpx_arr[mask], y_mpx_arr[mask]
-        assert len(u_arr) == len(y_arr) == len(t_arr), (len(u_arr), len(y_arr), len(t_arr))
-        return u_arr, y_arr, t_arr, u_t
+        Returns:
+            np.ndarray: スコア値（shape: (n_out,)）
+        """
+        score_func = score_func_by_name(score)
+        return score_func(y_true=self.y_mlt_arr, y_pred=self.y_pred_mlt_arr)
 
-    @staticmethod
-    def _create_constant_step_time_series(dataset_gen, *, t_max, n_steps):
-        t_arr = np.linspace(0, t_max, n_steps + 1)
-        u_arr, y_arr = dataset_gen(t_arr)
-        u_t = to_continuous_function_with_linspace_time(t_arr, u_arr)
-        return u_arr, y_arr, t_arr, u_t
 
+class PredictionResultSet:
+    def __init__(self, results: list[PredictionResult]):
+        self._results = results
+
+    def __len__(self):
+        return len(self._results)
+
+    def __getitem__(self, sample_index: int):
+        return self._results[sample_index]
+
+    @cache
+    def aggregated_score(
+            self,
+            score: ScoreName,
+    ) -> np.ndarray:
+        """
+        結果全体のデータをひとつのデータとして集約し、scoreを計算する。
+        """
+        y_true_arr = np.array([r.y_mlt_arr for r in self._results])
+        y_pred_arr = np.array([r.y_pred_mlt_arr for r in self._results])
+        score_func = score_func_by_name(score)
+        return score_func(y_true=y_true_arr, y_pred=y_pred_arr)
+
+
+class AbstractEstimator(ABC):
+    @abstractmethod
+    def __init__(self, **kwargs):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def fit(self, datasets: Iterable[Dataset], *, show_progress=False) -> list[PredictionResult]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def predict(self, dataset: Dataset, *, show_progress=False,
+                state_comp_result: StateComputationResult = None) -> PredictionResult:
+        raise NotImplementedError()
+
+
+class NVQRCEstimator(AbstractEstimator):
     @classmethod
-    def create_instance(cls, param: QRCParam):
-        """パラメータからQRCExperimentインスタンスを作成"""
-        # 物理系・ソルバーを構築
-        system = NVReservoirPhysicsSystem(
+    def _create_system(cls, param: NVQRCParam, seed: int):
+        return NVReservoirPhysicsSystem(
             n_qubit=param.n_qubits,
             j_mean=param.j_mean,
             j_std=param.j_std,
@@ -128,191 +154,263 @@ class QRCExperiment:
             h_std=param.h_std,
             h_axis=Axis.Z,
             h_td_axis=Axis.X,
-            seed=param.seed,
+            seed=seed,
         )
 
-        solver = TimeEvolutionSolver(
+    @classmethod
+    def _create_solver(cls, *, param: NVQRCParam, system: AbstractPhysicalSystem):
+        return TimeEvolutionSolver(
             system=system,
-            observable=reduce(lambda x, y: x + y, [
-                NVReservoirObservable(n_qubit=param.n_qubits, axis=axis)
-                for is_enabled, axis in
-                [(param.obs_x, Axis.X), (param.obs_y, Axis.Y), (param.obs_z, Axis.Z)]
-                if is_enabled
-            ]),
+            observable=reduce(
+                lambda x, y: x + y,
+                [
+                    NVReservoirObservable(n_qubit=param.n_qubits, axis=axis)
+                    for is_enabled, axis in
+                    [(param.obs_x, Axis.X), (param.obs_y, Axis.Y), (param.obs_z, Axis.Z)]
+                    if is_enabled
+                ],
+            ),
             collapse_operator=NVReservoirCollapseOperator(n_qubit=param.n_qubits,
                                                           gamma_z=param.gamma_z),
             init_psi=fullstate(",".join(["z+"] * param.n_qubits)),
         )
 
-        # データセットを生成
-        rng = np.random.RandomState(seed=param.seed)
-        if param.func_type == "lagged_sine":
-            dataset = [
-                cls._create_oversampled_time_series_for_multiplex(
-                    lambda t_arr: DelayedSine.create(t_arr, rng=rng, lag=5 * param.n_mpx, freq=1.0),
-                    t_max=param.t_max,
-                    n_steps=param.n_steps,
-                    n_mpx=param.n_mpx,
-                ) for _ in range(param.n_samples_train + param.n_samples_test)
-            ]
-        elif param.func_type == "lagged_random_uniform":
-            dataset = [
-                cls._create_constant_step_time_series(
-                    lambda t_arr: LaggedInput.create_with_random_input(
-                        n=len(t_arr), rng=rng, lag=2,
-                    ),
-                    t_max=param.t_max,
-                    n_steps=param.n_steps,
-                ) for _ in range(param.n_samples_train + param.n_samples_test)
-            ]
-        else:
-            raise ValueError(f"Invalid func_type: {param.func_type}")
-        dataset_train = dataset[:param.n_samples_train]
-        dataset_test = dataset[param.n_samples_train:]
+    def __init__(self, *, param: NVQRCParam, seed: int, n_washout: int):
+        self._param = param
+        self._seed = seed
+        self._n_washout = n_washout
+        self._lr_model = LinearRegression()
+        self._system = self._create_system(param=param, seed=seed)
+        self._solver = self._create_solver(param=param, system=self._system)
 
-        return cls(
-            system=system,
-            solver=solver,
-            dataset_train=dataset_train,
-            dataset_test=dataset_test,
-            n_samples_train=param.n_samples_train,
-            n_samples_test=param.n_samples_test,
-            n_mpx=param.n_mpx,
-            n_washout=param.n_washout,
-        )
+    @classmethod
+    def _get_time_evol_states(
+            cls,
+            *,
+            solver: TimeEvolutionSolver,
+            n_mpx: int,
+            u_t: Continuous,
+            t_arr: Discrete,
+            reset_state: bool = True,
+            tqdm_title: str | None = None
+    ) -> tuple[np.ndarray, QRCStateSeries]:
+        """
+        QRC状態系列と出力時刻配列を計算する。
 
-    def _get_time_evol_states(self, u_t, t_arr, *, tqdm_title: str | None):
-        """時間発展状態を取得"""
-        steps = []
-        t_arr_out = []
-        it = range(len(t_arr) - 2)
+        Args:
+            solver (TimeEvolutionSolver): 時間発展を計算するソルバー。
+            n_mpx (int): 各時刻区間を分割する数（マルチプレクサ数）。
+            u_t (np.ndarray): 入力信号配列。
+            t_arr (np.ndarray): 時刻配列。
+            reset_state (bool, optional): 状態をリセットするかどうか。デフォルトはTrue。
+            tqdm_title (str | None, optional): 進捗バーのタイトル。デフォルトはNone。
+
+        Returns:
+            tuple[np.ndarray, QRCStateSeries]: 出力時刻配列とQRC状態系列。
+        """
+        # QRC状態と出力時刻配列の初期化
+        steps: list[QRCStateTimeStep] = []
+
+        # 状態をリセットする場合
+        if reset_state:
+            solver.reset_rho()
+
+        valid_time_mask = np.zeros(len(t_arr), dtype=bool)
+        valid_time_mask[:-2] = True  # mesolveが後方の時刻を参照するため少し前で止める
+
+        # 進捗バーの設定（必要な場合）
+        it = range(np.count_nonzero(valid_time_mask))
         if tqdm_title:
             it = tqdm(it, desc=tqdm_title)
-        for i in it:  # mesolveが後方の時刻を参照するため少し前で止める
+
+        # 各時刻区間ごとに時間発展を計算し、QRC状態を記録
+        for i in it:
             # ステップの開始時刻から終了時刻まで時間発展させて、各時刻における結果を得る
             t_begin, t_end = t_arr[i], t_arr[i + 1]
-            t_div = np.linspace(t_begin, t_end, self._n_mpx + 1)[:-1]  # shape: (n_mpx,)
-            result = self._solver.forward(u_t, t_div)
+            t_div = np.linspace(t_begin, t_end, n_mpx + 1)[:-1]
+            result = solver.forward(u_t, t_div)
 
-            # flatten all qubit states at this time step
-            states = np.stack([result.expect(j) for j in range(result.n_expect)],
-                              axis=1)  # (n_mpx, 状態数)
+            # 各観測量の期待値をまとめて配列化（shape: (n_mpx, n_expect)）
+            states = np.stack([result.expect(j) for j in range(result.n_expect)], axis=1)
             steps.append(QRCStateTimeStep(states=states))
-            t_arr_out.append(t_begin)
 
-        return np.array(t_arr_out)[self._n_washout:], QRCStateSeries(steps=steps)[self._n_washout:]
+        # 出力時刻配列とQRC状態列を返す
+        return valid_time_mask, QRCStateSeries(steps=steps)
 
-    def _forward_data(self, dataset: list, *, show_progress=False, name_prefix: str):
-        """データを処理"""
-        forward_results: list[ForwardResult] = []
-        for i in range(len(dataset)):
-            u_arr, y_arr, t_arr, u_t = dataset[i]
+    def _compute_states(self, dataset: Dataset, *,
+                        tqdm_title: str | None = None) -> StateComputationResult:
+        """
+        Compute QRC state series for the specified dataset.
 
-            # QRC状態系列を計算
-            self._solver.reset_rho()
-            t_arr_out, states = self._get_time_evol_states(
-                u_t, t_arr, tqdm_title=f"{name_prefix} #{i}" if show_progress else None,
+        Args:
+            dataset (Dataset): Input dataset containing time array, input signal, and target output.
+            tqdm_title (str | None, optional): Title for progress bar. If None, no progress bar is shown.
+
+        Returns:
+            StateComputationResult: Result object containing computed state series and related data
+                including time array, input array, states, and target output array.
+        """
+        u_arr, y_arr, t_arr, u_t = dataset.u_arr, dataset.y_arr, dataset.t_arr, dataset.u_t
+        valid_time_mask, states = self._get_time_evol_states(
+            solver=self._solver,
+            n_mpx=self._param.n_mpx,
+            u_t=u_t,
+            t_arr=t_arr,
+            reset_state=True,
+            tqdm_title=tqdm_title,
+        )
+        t_arr = t_arr[valid_time_mask]
+        u_arr = u_arr[valid_time_mask]
+        y_arr = y_arr[valid_time_mask]
+        return StateComputationResult(
+            t_arr=t_arr,
+            u_mlt_arr=u_arr[:, None],
+            states=states,
+            y_mlt_arr=y_arr[:, None],
+        )
+
+    def fit(self, datasets: Iterable[Dataset], *, show_progress=True) -> list[PredictionResult]:
+        """
+        複数のデータセットを用いてモデルを学習する。
+
+        Args:
+            datasets (Iterable[Dataset]): 学習に用いるデータセットのイテラブル。
+            show_progress (bool, optional): 進捗バーを表示するかどうか。デフォルトはFalse。
+
+        Returns:
+            Self: 学習済みのインスタンス自身を返す。
+        """
+        x_lst, y_lst, state_comp_results = [], [], []
+        for i, dataset in enumerate(datasets):
+            result = self._compute_states(dataset, tqdm_title="fit" if show_progress else None)
+            x_mlt_arr = np.array(result.states)
+            y_mlt_arr = result.y_mlt_arr
+            state_comp_results.append(result)
+            x_lst.append(x_mlt_arr)
+            y_lst.append(y_mlt_arr)
+
+        # 全データセットを連結
+        x_all = np.concatenate(x_lst, axis=0)
+        y_all = np.concatenate(y_lst, axis=0)
+
+        # 線形回帰モデルを学習
+        self._lr_model.fit(x_all, y_all)
+
+        # 予測
+        results = []
+        for dataset, state_comp_result in zip(datasets, state_comp_results):
+            result = self.predict(dataset, state_comp_result=state_comp_result)
+            results.append(result)
+        return results
+
+    def predict(self, dataset: Dataset, *, show_progress=True,
+                state_comp_result: StateComputationResult = None) -> PredictionResult:
+        """
+        指定したデータセットに対して予測を行う。
+
+        Args:
+            dataset (Dataset): 予測対象のデータセット。
+            show_progress (bool, optional): 進捗バーを表示するかどうか。デフォルトはFalse。
+
+        Returns:
+            PredictionResult: 予測結果を格納したRegressionResultインスタンス。
+        """
+        # QRC状態系列と出力時刻配列を取得し、出力時刻に対応するデータのみ抽出
+        if state_comp_result is None:
+            result = self._compute_states(dataset, tqdm_title="predict" if show_progress else None)
+        else:
+            result = state_comp_result
+        x_mlt_arr = np.array(result.states)
+        y_mlt_arr = result.y_mlt_arr
+
+        # 線形回帰モデルによる予測
+        y_pred_arr = self._lr_model.predict(x_mlt_arr)
+
+        # 予測結果をRegressionResultとして返す
+        return PredictionResult(
+            t_arr=result.t_arr,
+            u_mlt_arr=result.u_mlt_arr,
+            states=result.states,
+            y_mlt_arr=y_mlt_arr,
+            y_pred_mlt_arr=y_pred_arr,
+        )
+
+
+class AbstractExperimentSuite(ABC):
+    @abstractmethod
+    def run(self):
+        raise NotImplementedError()
+
+
+class PredictionExperimentSuite(AbstractExperimentSuite):
+    """任意の予測実験Modelをまとめて管理・評価する汎用Suiteクラス"""
+
+    def __init__(
+            self,
+            *,
+            generator_fn: Callable[[np.random.RandomState], AbstractDatasetGenerator],
+            n_train_samples: int,
+            n_test_samples: int,
+            rng: np.random.RandomState,
+            model_class: type[AbstractEstimator],
+            model_kwargs: dict,
+            show_progress: bool = False,
+    ):
+        self._generator_fn = generator_fn
+        self._n_train_samples = n_train_samples
+        self._n_test_samples = n_test_samples
+        self._rng = rng
+        self._model_class = model_class
+        self._model_kwargs = model_kwargs
+        self._show_progress = show_progress
+
+        self._run = False
+
+        self._results_train: PredictionResultSet | None = None
+        self._results_test: PredictionResultSet | None = None
+
+    def run(self):
+        if self._run:
+            raise ValueError(
+                "run() method has already been called. Cannot run experiment multiple times."
             )
-            mask = np.isin(t_arr, t_arr_out)
-            t_arr, u_arr, y_arr = t_arr[mask], u_arr[mask], y_arr[mask]
 
-            forward_results.append(
-                ForwardResult(
-                    t=t_arr,
-                    u=u_arr[:, None],
-                    states=states,
-                    y=y_arr[:, None],
-                )
-            )
-        return forward_results
+        # Generate training datasets
+        datasets_train = []
+        for _ in range(self._n_train_samples):
+            dataset = self._generator_fn(self._rng).create()
+            datasets_train.append(dataset)
 
-    def _train_regression_model(self, train_forward_results):
-        """回帰モデルを訓練"""
-        state_all, y_all = [], []
-        for i in range(self._n_samples_train):
-            state_all.append(np.array(train_forward_results[i].states))
-            y_all.append(train_forward_results[i].y)
-        state_all = np.concatenate(state_all, axis=0)  # (T * n_samples, n_states)
-        y_all = np.concatenate(y_all, axis=0)  # (T * n_samples, n_out)
+        # Generate test datasets  
+        datasets_test = []
+        for _ in range(self._n_test_samples):
+            dataset = self._generator_fn(self._rng).create()
+            datasets_test.append(dataset)
 
-        self._lr_model.fit(state_all, y_all)
+        # Create and fit model on training data
+        model = self._model_class(**self._model_kwargs)
+        results_train = model.fit(datasets_train, show_progress=self._show_progress)
+        self._results_train = PredictionResultSet(results_train)
 
-    def _evaluate_data(self, forward_results: list[ForwardResult]):
-        """データを評価"""
-        regression_results: list[RegressionResult] = []
-        for i in range(len(forward_results)):
-            forward_result = forward_results[i]
-            y_pred = self._lr_model.predict(np.array(forward_result.states))
-            r2_score = self._lr_model.score(np.array(forward_result.states), forward_result.y)
-            regression_results.append(
-                RegressionResult(
-                    t=forward_result.t,
-                    u=forward_result.u,
-                    states=forward_result.states,
-                    y=forward_result.y,
-                    y_pred=y_pred,
-                    r2_score=r2_score,
-                )
-            )
-        return regression_results
+        # Get predictions on test data
+        results_test = []
+        for dataset in datasets_test:
+            result = model.predict(dataset, show_progress=self._show_progress)
+            results_test.append(result)
+        self._results_test = PredictionResultSet(results_test)
 
-    # noinspection DuplicatedCode
-    def run(self, *, show_progress=False) \
-            -> tuple[QRCExperimentResultEntry, QRCExperimentResultEntry]:
-        """QRC実験を実行"""
-        # 訓練データ処理
-        train_forward_results = self._forward_data(
-            self._dataset_train,
-            show_progress=show_progress,
-            name_prefix="train",
-        )
+        self._run = True
 
-        # 回帰モデル訓練
-        self._train_regression_model(train_forward_results)
+    def _check_run(self) -> None:
+        if not self._run:
+            raise RuntimeError("You must call run() before accessing results_train.")
 
-        # 訓練データ評価
-        train_regression_results = self._evaluate_data(train_forward_results)
+    @property
+    def results_train(self) -> PredictionResultSet:
+        self._check_run()
+        return self._results_train
 
-        # テストデータ処理
-        test_forward_results = self._forward_data(
-            self._dataset_test,
-            show_progress=show_progress,
-            name_prefix="test",
-        )
-
-        # テストデータ評価
-        test_regression_results = self._evaluate_data(test_forward_results)
-
-        # 結果を返す
-        train_entry = QRCExperimentResultEntry(
-            name=f"train",
-            t=np.array([r.t for r in train_regression_results]),
-            u=np.array([r.u for r in train_regression_results]),
-            states=[r.states for r in train_regression_results],
-            y_pred=np.array([r.y_pred for r in train_regression_results]),
-            y_true=np.array([r.y for r in train_regression_results]),
-            r2_score=np.array([r.r2_score for r in train_regression_results]),
-        )
-
-        test_entry = QRCExperimentResultEntry(
-            name=f"test",
-            t=np.array([r.t for r in test_regression_results]),
-            u=np.array([r.u for r in test_regression_results]),
-            states=[r.states for r in test_regression_results],
-            y_pred=np.array([r.y_pred for r in test_regression_results]),
-            y_true=np.array([r.y for r in test_regression_results]),
-            r2_score=np.array([r.r2_score for r in test_regression_results]),
-        )
-
-        return train_entry, test_entry
-
-
-def run_qrc_experiment(p: QRCParam, *, show_progress=False) -> QRCExperimentResult:
-    """QRC実験を実行する関数（後方互換性のため）"""
-    experiment = QRCExperiment.create_instance(p)
-    train_entry, test_entry = experiment.run(show_progress=show_progress)
-    return QRCExperimentResult(
-        param=p,
-        train=train_entry,
-        test=test_entry,
-    )
+    @property
+    def results_test(self) -> PredictionResultSet:
+        self._check_run()
+        return self._results_test
