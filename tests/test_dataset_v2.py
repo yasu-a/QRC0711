@@ -1,15 +1,27 @@
 import itertools
+from typing import Any
 
 import numpy as np
 import pytest
 
-from utils.dataset_v2 import AbstractDiscreteDataset, DelayedRandomDataset, DelayedSineDataset, \
-    ParityCheckDataset, NoisyDelayedSineDataset, NarmaDataset
+from utils.dataset_v2 import AbstractDiscreteDatasetGenerator, DelayedRandomDatasetGenerator, DelayedSineDatasetGenerator, \
+    ParityCheckDatasetGenerator, NoisyDelayedSineDatasetGenerator, NarmaDatasetGenerator
 
 
-class _TestDiscreteDataset(AbstractDiscreteDataset):
+class _TestDiscreteDataset(AbstractDiscreteDatasetGenerator):
     def __init__(self, *, t_max: float, t_step: float):
         super().__init__(t_max=t_max, t_step=t_step)
+
+    @property
+    def name(self) -> str:
+        return "TestDiscreteDataset"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            t_max=self._t_max,
+            t_step=self._t_step,
+        )
 
     @property
     def u_arr(self) -> np.ndarray:
@@ -57,7 +69,7 @@ def test_delayed_sine_dataset():
     freq = 1
     phase_offset = np.pi / 2
     discrete_lag = 3
-    ds = DelayedSineDataset(
+    ds = DelayedSineDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         freq=freq,
@@ -92,7 +104,7 @@ def test_delayed_sine_dataset():
 # noinspection DuplicatedCode
 def test_delayed_sine_dataset_uniqueness():
     # DelayedSineDatasetで同一インスタンスの1回目生成されたデータと2回目に生成されたデータが同一かどうかを確認するテスト
-    ds = DelayedSineDataset(
+    ds = DelayedSineDatasetGenerator(
         t_max=1,
         t_step=0.1,
         freq=1,
@@ -119,7 +131,7 @@ def test_noisy_delayed_sine_dataset_noise_behavior():
     noise_std = 0.01
     n_repeat = 2000
 
-    ds = NoisyDelayedSineDataset(
+    ds = NoisyDelayedSineDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         freq=freq,
@@ -152,7 +164,7 @@ def test_delayed_random_dataset():
     discrete_lag = 3
     low = 0
     high = 1
-    ds = DelayedRandomDataset(
+    ds = DelayedRandomDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         discrete_lag=discrete_lag,
@@ -193,7 +205,7 @@ def test_delayed_random_dataset():
 
 def test_delayed_random_dataset_uniqueness():
     # DelayedRandomDatasetで同一インスタンスの1回目生成されたデータと2回目に生成されたデータが同一かどうかを確認するテスト
-    ds = DelayedRandomDataset(
+    ds = DelayedRandomDatasetGenerator(
         t_max=1,
         t_step=0.1,
         discrete_lag=3,
@@ -213,7 +225,7 @@ def test_parity_check_dataset():
     # ParityCheckDatasetの動作（パリティ計算・連続/離散データの一致）を検証するテスト
     t_max = 1
     t_step = 0.1
-    ds = ParityCheckDataset(
+    ds = ParityCheckDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         window_size=3,
@@ -247,7 +259,7 @@ def test_parity_check_dataset():
 
 def test_parity_check_dataset_uniqueness():
     # ParityCheckDatasetで同一インスタンスの1回目生成されたデータと2回目に生成されたデータが同一かどうかを確認するテスト
-    ds = ParityCheckDataset(
+    ds = ParityCheckDatasetGenerator(
         t_max=1,
         t_step=0.1,
         window_size=3,
@@ -282,7 +294,7 @@ def test_narma_dataset():
     low, high = 0.0, 0.5
     seed = 42
 
-    ds = NarmaDataset(
+    ds = NarmaDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         n=n,
@@ -328,7 +340,7 @@ def test_narma_dataset_uniqueness():
     low, high = 0.0, 0.5
     seed = 42
 
-    ds = NarmaDataset(
+    ds = NarmaDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         n=n,

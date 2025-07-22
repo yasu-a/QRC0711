@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Callable
+from dataclasses import dataclass
+from typing import Callable, Any
 
 import numpy as np
 
@@ -42,17 +43,41 @@ NV <- t, u_t(t), y_t(t) 連続
  - u_t(t) = u_arr[floor(t / t_step)], y_t(t) = y_arr[floor(t / t_step)]
 """
 
-_Discrete = np.ndarray | float
-_Continuous = Callable[[_Discrete], _Discrete]
+Discrete = np.ndarray | float
+Continuous = Callable[[Discrete], Discrete]
 
 
-class AbstractDataset(ABC):
+@dataclass(slots=True)
+class Dataset:
+    name: str
+    parameters: dict[str, Any]
+    t_arr: Discrete
+    u_arr: Discrete
+    y_arr: Discrete
+    u_t: Continuous
+    y_t: Continuous
+
+
+class AbstractDatasetGenerator(ABC):
     def __init__(self, *, t_max: float, t_step: float):
         self._t_max = t_max
         self._t_step = t_step
 
     @property
-    def t_arr(self) -> _Discrete:
+    @abstractmethod
+    def name(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            t_max=self._t_max,
+            t_step=self._t_step,
+        )
+
+    @property
+    def t_arr(self) -> Discrete:
         return np.arange(0, self._t_max, self._t_step)
 
     def __len__(self) -> int:
@@ -60,60 +85,65 @@ class AbstractDataset(ABC):
 
     @property
     @abstractmethod
-    def u_arr(self) -> _Discrete:
+    def u_arr(self) -> Discrete:
         raise NotImplementedError()
 
     @property
     @abstractmethod
-    def y_arr(self) -> _Discrete:
-        raise NotImplementedError()
-
-    def create_continuous(self) -> tuple[_Discrete, _Continuous, _Continuous]:
-        return self.t_arr, self.u_t, self.y_t
-
-    @property
-    @abstractmethod
-    def u_t(self) -> _Continuous:
+    def y_arr(self) -> Discrete:
         raise NotImplementedError()
 
     @property
     @abstractmethod
-    def y_t(self) -> _Continuous:
+    def u_t(self) -> Continuous:
         raise NotImplementedError()
 
-    def create_discrete(self) -> tuple[_Discrete, _Discrete, _Discrete]:
-        return self.t_arr, self.u_arr, self.y_arr
-
-
-class AbstractContinuousDataset(AbstractDataset, ABC):
     @property
-    def u_arr(self) -> _Discrete:
+    @abstractmethod
+    def y_t(self) -> Continuous:
+        raise NotImplementedError()
+
+    def create(self) -> Dataset:
+        return Dataset(
+            name=self.name,
+            parameters=self.parameters,
+            t_arr=self.t_arr,
+            u_arr=self.u_arr,
+            y_arr=self.y_arr,
+            u_t=self.u_t,
+            y_t=self.y_t,
+        )
+
+
+class AbstractContinuousDatasetGenerator(AbstractDatasetGenerator, ABC):
+    @property
+    def u_arr(self) -> Discrete:
         return self.u_t(self.t_arr)
 
     @property
-    def y_arr(self) -> _Discrete:
+    def y_arr(self) -> Discrete:
         return self.y_t(self.t_arr)
 
 
-class AbstractDiscreteDataset(AbstractDataset, ABC):
+class AbstractDiscreteDatasetGenerator(AbstractDatasetGenerator, ABC):
     @property
-    def u_t(self) -> _Continuous:
-        def u_t(t: _Discrete) -> _Discrete:
+    def u_t(self) -> Continuous:
+        def u_t(t: Discrete) -> Discrete:
             idx = np.floor(np.asarray(t) / self._t_step + 1e-11).astype(int)
             return self.u_arr[idx]
 
         return u_t
 
     @property
-    def y_t(self) -> _Continuous:
-        def y_t(t: _Discrete) -> _Discrete:
+    def y_t(self) -> Continuous:
+        def y_t(t: Discrete) -> Discrete:
             idx = np.floor(np.asarray(t) / self._t_step + 1e-11).astype(int)
             return self.y_arr[idx]
 
         return y_t
 
 
-class DelayedSineDataset(AbstractContinuousDataset):  # 本質的に連続的なデータセット
+class DelayedSineDatasetGenerator(AbstractContinuousDatasetGenerator):  # 本質的に連続的なデータセット
     def __init__(
             self,
             *,
@@ -131,25 +161,39 @@ class DelayedSineDataset(AbstractContinuousDataset):  # 本質的に連続的な
         self._discrete_lag = discrete_lag
         self._amplitude = amplitude
 
-    def __f_t(self, t: _Discrete) -> _Discrete:
+    @property
+    def name(self) -> str:
+        return f"DelayedSine({self._discrete_lag})"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            **super().parameters,
+            freq=self._freq,
+            phase_offset=self._phase_offset,
+            discrete_lag=self._discrete_lag,
+            amplitude=self._amplitude,
+        )
+
+    def __f_t(self, t: Discrete) -> Discrete:
         return self._amplitude * np.sin(2 * np.pi * self._freq * t + self._phase_offset)
 
     @property
-    def u_t(self) -> _Continuous:
-        def u_t(t: _Discrete) -> _Discrete:
+    def u_t(self) -> Continuous:
+        def u_t(t: Discrete) -> Discrete:
             return self.__f_t(t)
 
         return u_t
 
     @property
-    def y_t(self) -> _Continuous:
-        def y_t(t: _Discrete) -> _Discrete:
+    def y_t(self) -> Continuous:
+        def y_t(t: Discrete) -> Discrete:
             return self.__f_t(t - self._discrete_lag * self._t_step)
 
         return y_t
 
 
-class NoisyDelayedSineDataset(DelayedSineDataset):
+class NoisyDelayedSineDatasetGenerator(DelayedSineDatasetGenerator):
     def __init__(
             self,
             *,
@@ -176,27 +220,38 @@ class NoisyDelayedSineDataset(DelayedSineDataset):
         self._rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
 
     @property
-    def u_t(self) -> _Continuous:  # 生成の度に異なるノイズが加わる
+    def name(self) -> str:
+        return f"NoisyDelayedSine({self._discrete_lag}, {self._noise_std})"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            **super().parameters,
+            noise_std=self._noise_std,
+        )
+
+    @property
+    def u_t(self) -> Continuous:  # 生成の度に異なるノイズが加わる
         super_u_t = super().u_t
 
-        def u_t(t: _Discrete) -> _Discrete:
+        def u_t(t: Discrete) -> Discrete:
             a = super_u_t(t)
             return a + self._rng.normal(0, self._noise_std, len(a))
 
         return u_t
 
     @property
-    def y_t(self) -> _Continuous:  # 生成の度に異なるノイズが加わる
+    def y_t(self) -> Continuous:  # 生成の度に異なるノイズが加わる
         super_y_t = super().y_t
 
-        def y_t(t: _Discrete) -> _Discrete:
+        def y_t(t: Discrete) -> Discrete:
             a = super_y_t(t)
             return a + self._rng.normal(0, self._noise_std, len(a))
 
         return y_t
 
 
-class DelayedRandomDataset(AbstractDiscreteDataset):  # 本質的に離散的なデータセット
+class DelayedRandomDatasetGenerator(AbstractDiscreteDatasetGenerator):  # 本質的に離散的なデータセット
     def __init__(
             self,
             *,
@@ -218,17 +273,31 @@ class DelayedRandomDataset(AbstractDiscreteDataset):  # 本質的に離散的な
         self._series = self._rng.uniform(self._low, self._high, len(self.t_arr))
 
     @property
-    def u_arr(self) -> _Discrete:
+    def name(self) -> str:
+        return f"DelayedRandom({self._discrete_lag})"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            t_max=self._t_max,
+            t_step=self._t_step,
+            discrete_lag=self._discrete_lag,
+            low=self._low,
+            high=self._high,
+        )
+
+    @property
+    def u_arr(self) -> Discrete:
         return self._series
 
     @property
-    def y_arr(self) -> _Discrete:
+    def y_arr(self) -> Discrete:
         y_arr = np.zeros_like(self.u_arr)
         y_arr[self._discrete_lag:] = self.u_arr[:-self._discrete_lag]
         return y_arr
 
 
-class ParityCheckDataset(AbstractDiscreteDataset):  # 本質的に離散的なデータセット
+class ParityCheckDatasetGenerator(AbstractDiscreteDatasetGenerator):  # 本質的に離散的なデータセット
     def __init__(
             self,
             *,
@@ -245,38 +314,50 @@ class ParityCheckDataset(AbstractDiscreteDataset):  # 本質的に離散的な�
         self._series = self._rng.choice([0, 1], size=len(self.t_arr))
 
     @property
-    def u_arr(self) -> _Discrete:
+    def name(self) -> str:
+        return f"ParityCheck({self._window_size})"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            **super().parameters,
+            window_size=self._window_size,
+        )
+
+    @property
+    def u_arr(self) -> Discrete:
         return self._series
 
     @property
-    def y_arr(self) -> _Discrete:
+    def y_arr(self) -> Discrete:
         y_arr = np.zeros_like(self.u_arr)
         for k in range(self._window_size, len(self.u_arr)):
             y_arr[k] = np.sum(self.u_arr[k - self._window_size:k]) % 2
         return y_arr
 
 
-class NarmaDataset(AbstractDiscreteDataset):
+class NarmaDatasetGenerator(AbstractDiscreteDatasetGenerator):
     """
     NARMAタスクのデータセット。
     本質的に離散的なデータセット。
     u_arr: 入力系列（ランダム一様分布）
     y_arr: NARMA方程式で生成される出力系列
     """
+
     def __init__(
-        self,
-        *,
-        t_max: float,
-        t_step: float,
-        n: int = 10,
-        a: float = 0.3,
-        b: float = 0.05,
-        c: float = 1.5,
-        d: float = 0.1,
-        low: float = 0.0,
-        high: float = 0.5,
-        seed: int | None = None,
-        rng: np.random.RandomState | None = None,
+            self,
+            *,
+            t_max: float,
+            t_step: float,
+            n: int = 10,
+            a: float = 0.3,
+            b: float = 0.05,
+            c: float = 1.5,
+            d: float = 0.1,
+            low: float = 0.0,
+            high: float = 0.5,
+            seed: int | None = None,
+            rng: np.random.RandomState | None = None,
     ):
         super().__init__(t_max=t_max, t_step=t_step)
         self._n = n
@@ -290,11 +371,28 @@ class NarmaDataset(AbstractDiscreteDataset):
         self._series = self._rng.uniform(self._low, self._high, len(self.t_arr))
 
     @property
-    def u_arr(self) -> _Discrete:
+    def name(self) -> str:
+        return f"Narma({self._n})"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            **super().parameters,
+            n=self._n,
+            a=self._a,
+            b=self._b,
+            c=self._c,
+            d=self._d,
+            low=self._low,
+            high=self._high,
+        )
+
+    @property
+    def u_arr(self) -> Discrete:
         return self._series
 
     @property
-    def y_arr(self) -> _Discrete:
+    def y_arr(self) -> Discrete:
         y_arr = np.zeros_like(self.u_arr)
         n = self._n
         a = self._a
@@ -304,10 +402,10 @@ class NarmaDataset(AbstractDiscreteDataset):
         u = self.u_arr
         for k in range(n - 1, len(u) - 1):
             y_arr[k + 1] = (
-                a * y_arr[k]
-                + b * y_arr[k] * np.sum(y_arr[k - n + 1:k + 1])
-                + c * u[k] * u[k - n + 1]
-                + d
+                    a * y_arr[k]
+                    + b * y_arr[k] * np.sum(y_arr[k - n + 1:k + 1])
+                    + c * u[k] * u[k - n + 1]
+                    + d
             )
         return y_arr
 
@@ -389,7 +487,7 @@ def _preview_dataset():
     discrete_lag = 3
     noise_std = 0.05
 
-    ds_delayed_sine = DelayedSineDataset(
+    ds_delayed_sine = DelayedSineDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         freq=1,
@@ -398,7 +496,7 @@ def _preview_dataset():
         amplitude=1,
     )
 
-    ds_noisy_delayed_sine = NoisyDelayedSineDataset(
+    ds_noisy_delayed_sine = NoisyDelayedSineDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         freq=1,
@@ -408,7 +506,7 @@ def _preview_dataset():
         noise_std=noise_std,
     )
 
-    ds_delayed_random = DelayedRandomDataset(
+    ds_delayed_random = DelayedRandomDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         discrete_lag=discrete_lag,
@@ -416,7 +514,7 @@ def _preview_dataset():
         high=1,
     )
 
-    ds_parity_check = ParityCheckDataset(
+    ds_parity_check = ParityCheckDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
         window_size=discrete_lag,
