@@ -134,6 +134,15 @@ def test_noisy_delayed_sine_dataset_noise_behavior():
     noise_std = 0.01
     n_repeat = 2000
 
+    ds_pure = DelayedSineDatasetGenerator(
+        t_max=t_max,
+        t_step=t_step,
+        freq=freq,
+        phase_offset=phase_offset,
+        discrete_lag=discrete_lag,
+        amplitude=amplitude,
+    )
+
     ds = NoisyDelayedSineDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
@@ -145,6 +154,7 @@ def test_noisy_delayed_sine_dataset_noise_behavior():
         seed=42,
     )
 
+    # sample data
     u_arrs = []
     y_arrs = []
     for _ in range(n_repeat):
@@ -153,9 +163,15 @@ def test_noisy_delayed_sine_dataset_noise_behavior():
     u_arrs = np.stack(u_arrs)
     y_arrs = np.stack(y_arrs)
 
+    # compare pure and noisy generator
+    u_arr_mean = u_arrs.mean(axis=0)
+    y_arr_mean = y_arrs.mean(axis=0)
+    np.testing.assert_allclose(u_arr_mean, ds_pure.u_arr, rtol=noise_std / n_repeat ** .5 * 5)
+    np.testing.assert_allclose(y_arr_mean, ds_pure.y_arr, rtol=noise_std / n_repeat ** .5 * 5)
+
+    # evaluate noise behavior
     u_std = u_arrs.std(axis=0)
     y_std = y_arrs.std(axis=0)
-
     np.testing.assert_allclose(u_std, noise_std, rtol=0.1)
     np.testing.assert_allclose(y_std, noise_std, rtol=0.1)
 
@@ -208,13 +224,20 @@ def test_delayed_random_dataset():
 
 def test_delayed_random_dataset_uniqueness():
     # DelayedRandomDatasetで同一インスタンスの1回目生成されたデータと2回目に生成されたデータが同一かどうかを確認するテスト
+    t_max = 1
+    t_step = 0.1
+    discrete_lag = 3
+    low = 0
+    high = 1
+    seed = 42
+
     ds = DelayedRandomDatasetGenerator(
-        t_max=1,
-        t_step=0.1,
-        discrete_lag=3,
-        low=0,
-        high=1,
-        seed=42,
+        t_max=t_max,
+        t_step=t_step,
+        discrete_lag=discrete_lag,
+        low=low,
+        high=high,
+        seed=seed,
     )
 
     np.testing.assert_array_almost_equal(ds.t_arr, ds.t_arr)
