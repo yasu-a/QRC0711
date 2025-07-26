@@ -6,10 +6,11 @@ from typing import Literal
 
 import numpy as np
 
-from experiment import PredictionResultSet, NVQRCEstimator, PredictionExperimentSuite
-from model import NVQRCParam
+from experiment import NVQRCEstimator, PredictionExperimentSuite
+from model.param import NVQRCParam
+from model.prediction_result import PredictionResultSet
+from service.dataset import NoisyDelayedSineDatasetGenerator, DelayedRandomDatasetGenerator
 from service.visualize import plot_state_series, plot_prediction
-from utils.dataset_v2 import NoisyDelayedSineDatasetGenerator, DelayedRandomDatasetGenerator
 
 """
 やること

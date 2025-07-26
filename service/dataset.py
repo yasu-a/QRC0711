@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Callable, Any
+from typing import Any
 
 import numpy as np
 
-from utils.seed_or_rng import check_seed_or_rng_and_get_rng
+from core.seed_or_rng import check_seed_or_rng_and_get_rng
+from model.dataset import Discrete, Continuous, Dataset
 
 """
 データセットの整理
@@ -42,20 +42,6 @@ NV <- t, u_t(t), y_t(t) 連続
  - t_step = ..., t = [0, 離散の要素数n * t_step) 
  - u_t(t) = u_arr[floor(t / t_step)], y_t(t) = y_arr[floor(t / t_step)]
 """
-
-Discrete = np.ndarray | float
-Continuous = Callable[[Discrete], Discrete]
-
-
-@dataclass(frozen=True)
-class Dataset:
-    name: str
-    parameters: dict[str, Any]
-    t_arr: Discrete
-    u_arr: Discrete
-    y_arr: Discrete
-    u_t: Continuous
-    y_t: Continuous
 
 
 class AbstractDatasetGenerator(ABC):

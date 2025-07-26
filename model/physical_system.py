@@ -6,9 +6,9 @@ from typing import Callable
 import numpy as np
 import qutip
 
-from utils import fullgate
-from utils.axis import Axis
-from utils.seed_or_rng import check_seed_or_rng_and_get_rng
+from core.fullgate import fullgate
+from core.seed_or_rng import check_seed_or_rng_and_get_rng
+from model.axis import Axis
 
 
 class AbstractPhysicalSystem(ABC):

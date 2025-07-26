@@ -3,7 +3,7 @@ from typing import Callable
 import pytest
 import qutip
 
-from utils import fullgate
+from core.fullgate import fullgate
 
 QObjProducer = Callable[[], qutip.Qobj]
 

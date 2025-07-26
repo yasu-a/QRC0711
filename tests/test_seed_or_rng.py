@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from utils.seed_or_rng import check_seed_or_rng_and_get_rng
+from core.seed_or_rng import check_seed_or_rng_and_get_rng
 
 
 def test_check_seed_or_rng_and_get_rng_default():

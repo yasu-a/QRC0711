@@ -3,8 +3,8 @@ from typing import Literal
 import matplotlib.pyplot as plt
 import numpy as np
 
-from experiment import PredictionResult
-from utils.score import r2_score
+from core.score import r2_score_2d
+from model.prediction_result import PredictionResult
 
 
 def plot_state_series(
@@ -187,11 +187,11 @@ def plot_prediction_vs_ground_truth(
         raise ValueError(f"不正な`out_index`型: {type(out_index)}")
 
     # R2スコア計算
-    r2 = r2_score(y_true=y_true_arr, y_pred=y_pred_arr)
+    r2 = r2_score_2d(y_true=y_true_arr, y_pred=y_pred_arr)
     if isinstance(r2, (list, tuple, float)) or (hasattr(r2, 'shape') and r2.shape == ()):  # scalar
         r2_str = f"$R^2={float(r2):.3f}$"
     else:
-        r2_str = f"$R^2={float(r2.mean()):.3f}$ avg."
+        r2_str = f"$R^2={float(np.mean(r2)):.3f}$ avg."
 
     if ax is None:
         ax = plt.gca()

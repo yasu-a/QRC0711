@@ -4,7 +4,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from utils.dataset_v2 import AbstractDiscreteDatasetGenerator, DelayedRandomDatasetGenerator, \
+from service.dataset import AbstractDiscreteDatasetGenerator, DelayedRandomDatasetGenerator, \
     DelayedSineDatasetGenerator, \
     ParityCheckDatasetGenerator, NoisyDelayedSineDatasetGenerator, NarmaDatasetGenerator
 
@@ -40,9 +40,9 @@ class _TestDiscreteDataset(AbstractDiscreteDatasetGenerator):
     [
         (t_max, t_step)
         for t_max, t_step in itertools.product(
-        [1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 1, 10, 100, 1000],
-        [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 1],
-    )
+            [1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 1, 10, 100, 1000],
+            [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 1],
+        )
         if t_max > t_step and t_max / t_step < 100000
     ]
 )

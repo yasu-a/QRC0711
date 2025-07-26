@@ -4,8 +4,9 @@ import numpy as np
 import qutip
 from numpy.typing import ArrayLike
 
-from physical_system import AbstractPhysicalSystem, AbstractObservable, AbstractCollapseOperator
-from utils.app_logging import create_logger
+from core.app_logging import create_logger
+from model.physical_system import AbstractPhysicalSystem, AbstractObservable, \
+    AbstractCollapseOperator
 
 
 class ForwardResult:

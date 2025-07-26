@@ -1,6 +1,6 @@
 import pytest
 
-from utils.axis import Axis
+from model.axis import Axis
 
 
 @pytest.mark.parametrize(

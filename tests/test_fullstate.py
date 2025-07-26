@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import qutip
 
-from utils.fullgate import fullgate
-from utils.fullstate import fullstate
+from core.fullgate import fullgate
+from core.fullstate import fullstate
 
 
 @pytest.mark.parametrize(

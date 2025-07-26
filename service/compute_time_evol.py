@@ -3,9 +3,9 @@ from abc import ABC, abstractmethod
 import numpy as np
 from tqdm import tqdm
 
-from model import QRCStateSeries, QRCStateTimeStep
-from time_evol_solver import AbstractTimeEvolutionSolver
-from utils.dataset_v2 import Continuous, Discrete
+from core.time_evol_solver import AbstractTimeEvolutionSolver
+from model.dataset import Discrete, Continuous
+from model.state_series import QRCStateTimeStep, QRCStateSeries
 
 
 class AbstractComputeTimeEvolStateSeriesService(ABC):
