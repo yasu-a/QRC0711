@@ -1,7 +1,5 @@
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from functools import reduce
-from typing import Callable, Sequence
+from typing import Sequence
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -9,71 +7,16 @@ from sklearn.linear_model import LinearRegression
 
 from core.fullstate import fullstate
 from core.time_evol_solver import create_time_evol_solver
+from experiment.estimator.base import AbstractEstimator
+from experiment.estimator.dto import StateComputationResult
 from model.axis import Axis
-from model.dataset import Discrete, Continuous, Dataset
+from model.dataset import Continuous, Discrete, Dataset
 from model.param import NVQRCParam
-from model.physical_system import NVReservoirPhysicsSystem, NVReservoirObservable, \
-    NVReservoirCollapseOperator, AbstractPhysicalSystem
-from model.prediction_result import PredictionResult, PredictionResultSet
-from model.state_series import AbstractStateSeries, QRCStateSeries
+from model.physical_system import NVReservoirPhysicsSystem, AbstractPhysicalSystem, \
+    NVReservoirObservable, NVReservoirCollapseOperator
+from model.prediction_result import PredictionResult
+from model.state_series import QRCStateSeries, AbstractStateSeries
 from service.compute_time_evol import get_compute_time_evol_state_series_service
-from service.dataset import AbstractDatasetGenerator
-
-
-@dataclass(slots=True)
-class StateComputationResult:
-    t_arr: np.ndarray  # (T,)
-    u_mlt_arr: np.ndarray  # (T, n_in)
-    states: AbstractStateSeries  # length: T
-    y_mlt_arr: np.ndarray  # (T, n_out)
-
-    # noinspection DuplicatedCode
-    def __post_init__(self):
-        assert isinstance(self.t_arr, np.ndarray), (type(self.t_arr), self.t_arr)
-        assert isinstance(self.u_mlt_arr, np.ndarray), (type(self.u_mlt_arr), self.u_mlt_arr)
-        assert isinstance(self.states, AbstractStateSeries), (type(self.states), self.states)
-        assert isinstance(self.y_mlt_arr, np.ndarray), (type(self.y_mlt_arr), self.y_mlt_arr)
-
-        n_t = len(self.t_arr)
-        assert self.t_arr.ndim == 1, self.t_arr.shape
-        assert self.u_mlt_arr.ndim == 2, self.u_mlt_arr.shape
-        assert self.u_mlt_arr.shape[0] == n_t, (self.u_mlt_arr.shape[0], n_t)
-        assert len(self.states) == n_t, (len(self.states), n_t)
-        assert self.y_mlt_arr.ndim == 2, self.y_mlt_arr.shape
-        assert self.y_mlt_arr.shape[0] == n_t, (self.y_mlt_arr.shape[0], n_t)
-
-        # copy arrays and make readonly
-        self.t_arr = self.t_arr.copy()
-        self.t_arr.setflags(write=False)
-        self.u_mlt_arr = self.u_mlt_arr.copy()
-        self.u_mlt_arr.setflags(write=False)
-        self.y_mlt_arr = self.y_mlt_arr.copy()
-        self.y_mlt_arr.setflags(write=False)
-
-
-class AbstractEstimator(ABC):
-    @abstractmethod
-    def __init__(self, **kwargs):
-        raise NotImplementedError()
-
-    @abstractmethod
-    def fit(
-            self,
-            datasets: Sequence[Dataset],
-            *,
-            show_progress=False,
-    ) -> list[PredictionResult]:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def predict(
-            self,
-            datasets: Sequence[Dataset],
-            *,
-            show_progress=False,
-            state_comp_result: Sequence[StateComputationResult | None] | None = None,
-    ) -> list[PredictionResult]:
-        raise NotImplementedError()
 
 
 class NVQRCEstimator(AbstractEstimator):
@@ -291,7 +234,7 @@ class NVQRCEstimator(AbstractEstimator):
         Args:
             datasets (Sequence[Dataset]): 予測対象のデータセットのシーケンス。
             show_progress (bool, optional): 進捗バーを表示するかどうか。デフォルトはTrue。
-            state_comp_result (list[StateComputationResult | None] | None, optional): 
+            state_comp_result (list[StateComputationResult | None] | None, optional):
                 事前に計算したStateComputationResultのリスト。
                 Noneの場合は全て新たに計算される。
                 リストの場合、Noneの要素に対応するデータセットのみ新たに計算される。
@@ -350,82 +293,3 @@ class NVQRCEstimator(AbstractEstimator):
             )
             results.append(prediction_result)
         return results
-
-
-class AbstractExperimentSuite(ABC):
-    @abstractmethod
-    def run(self):
-        raise NotImplementedError()
-
-
-class PredictionExperimentSuite(AbstractExperimentSuite):
-    """任意の予測実験Modelをまとめて管理・評価する汎用Suiteクラス"""
-
-    def __init__(
-            self,
-            *,
-            generator_fn: Callable[[np.random.RandomState], AbstractDatasetGenerator],
-            n_train_samples: int,
-            n_test_samples: int,
-            rng: np.random.RandomState,
-            model_class: type[AbstractEstimator],
-            model_kwargs: dict,
-            show_progress: bool = False,
-    ):
-        self._generator_fn = generator_fn
-        self._n_train_samples = n_train_samples
-        self._n_test_samples = n_test_samples
-        self._rng = rng
-        self._model_class = model_class
-        self._model_kwargs = model_kwargs
-        self._show_progress = show_progress
-
-        self._run = False
-
-        self._results_train: PredictionResultSet | None = None
-        self._results_test: PredictionResultSet | None = None
-
-    def run(self):
-        if self._run:
-            raise ValueError(
-                "run() method has already been called. Cannot run experiment multiple times."
-            )
-
-        # Generate training datasets
-        datasets_train = []
-        for _ in range(self._n_train_samples):
-            dataset = self._generator_fn(self._rng).create()
-            datasets_train.append(dataset)
-
-        # Generate test datasets  
-        datasets_test = []
-        for _ in range(self._n_test_samples):
-            dataset = self._generator_fn(self._rng).create()
-            datasets_test.append(dataset)
-
-        # Create estimator
-        model = self._model_class(**self._model_kwargs)
-
-        # Create and fit model on training data
-        results_train = model.fit(datasets_train, show_progress=self._show_progress)
-        self._results_train = PredictionResultSet(results_train)
-
-        # Get predictions on test data
-        results_test = model.predict(datasets_test, show_progress=self._show_progress)
-        self._results_test = PredictionResultSet(results_test)
-
-        self._run = True
-
-    def _check_run(self) -> None:
-        if not self._run:
-            raise RuntimeError("You must call run() before accessing results_train.")
-
-    @property
-    def results_train(self) -> PredictionResultSet:
-        self._check_run()
-        return self._results_train
-
-    @property
-    def results_test(self) -> PredictionResultSet:
-        self._check_run()
-        return self._results_test

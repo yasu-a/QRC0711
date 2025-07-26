@@ -6,7 +6,8 @@ from typing import Literal
 
 import numpy as np
 
-from experiment import NVQRCEstimator, PredictionExperimentSuite
+from experiment.estimator.nvqrc import NVQRCEstimator
+from experiment.suite.prediction import PredictionExperimentSuite
 from model.param import NVQRCParam
 from model.prediction_result import PredictionResultSet
 from service.dataset import NoisyDelayedSineDatasetGenerator, DelayedRandomDatasetGenerator
@@ -128,7 +129,8 @@ def _scorer_fn(p: NVQRCParam) -> float:
     results_train, results_test = run_qrc_experiment(p, n_cpu=1)
     results_train = results_train.washout_masked()
     results_test = results_test.washout_masked()
-    return results_train.aggregated_score("r2").mean() * 0.3 + results_test.aggregated_score("r2").mean() * 0.7
+    return results_train.aggregated_score("r2").mean() * 0.3 + results_test.aggregated_score(
+        "r2").mean() * 0.7
 
 
 def _constraint_predicate_fn(p: NVQRCParam) -> bool:
@@ -200,12 +202,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-r"""
-C:\Users\yasuh\PycharmProjects\QRC0711\.venv\Scripts\python.exe C:\Users\yasuh\PycharmProjects\QRC0711\main.py 
-Best R2=0.908, param={'N_QUBITS': 6, 'GAMMA_Z': 0.001, 'V': 8, 'J_MEAN': 0.5, 'J_STD': 1.0, 'H_MEAN': 2.5, 'H_STD': 1.75, 'M': 500, 'T': 30, 'test_ratio': 0.3, 'washout': 10, 'random_seed': 0}:  28%|██▊       | 274/972 [8:26:29<783:50:16, 4042.72s/it]
-
-0.5     2.5
-/6C2    /6x2
-0.0333  0.2083
-"""

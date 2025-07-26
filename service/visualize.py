@@ -34,6 +34,7 @@ def plot_state_series(
     x_data = t_arr if x_label == "time" else range(len(t_arr))
 
     if ax is None:
+        plt.figure(figsize=(15, 6))  # FIXME: すでにplt.figureが生成されていた場合に整合性が取れない
         ax = plt.gca()
 
     # 状態系列のプロット
@@ -47,8 +48,8 @@ def plot_state_series(
     ax.legend()
 
     # レイアウト調整・表示
-    plt.tight_layout()
     if ax.figure is plt.gcf():
+        plt.tight_layout()
         plt.show()
 
     return True
