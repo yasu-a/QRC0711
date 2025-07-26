@@ -197,3 +197,6 @@ def create_logger(name=None, cls: type = None) -> logging.Logger:
     _register_logger(logger)
 
     return logger
+
+
+set_level(INFO)

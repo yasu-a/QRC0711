@@ -41,7 +41,7 @@ def plot_state_series(
         ax.plot(x_data, states_array[:, i], label=f"State #{i}", lw=1)
 
     # ラベル・タイトル設定
-    ax.set_title("states time series")
+    ax.set_title(f"States Time Series (n_states={result.states.n_states})")
     ax.set_xlabel("Time" if x_label == "time" else "Index")
     ax.set_ylabel("State value")
     ax.legend()

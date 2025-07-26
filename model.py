@@ -46,6 +46,10 @@ class AbstractStateSeries(ABC):
         # 全てのステップを2次元配列にまとめる
         raise NotImplementedError()
 
+    @abstractmethod
+    def __getitem__(self, key: slice | np.ndarray) -> "AbstractStateSeries":
+        raise NotImplementedError()
+
     def series(self, i: int) -> np.ndarray:
         return np.array(self)[:, i]
 

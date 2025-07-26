@@ -1,16 +1,17 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import reduce, cache
-from typing import Callable, Iterable
+from typing import Callable, Sequence
 
 import numpy as np
+from joblib import Parallel, delayed
 from sklearn.linear_model import LinearRegression
-from tqdm import tqdm
 
-from model import AbstractStateSeries, NVQRCParam, QRCStateTimeStep, QRCStateSeries
+from model import AbstractStateSeries, NVQRCParam, QRCStateSeries
 from physical_system import NVReservoirPhysicsSystem, NVReservoirObservable, \
     NVReservoirCollapseOperator, AbstractPhysicalSystem
-from time_evol_solver import TimeEvolutionSolver
+from service.compute_time_evol import get_compute_time_evol_state_series_service
+from time_evol_solver import create_time_evol_solver
 from utils.axis import Axis
 from utils.dataset_v2 import AbstractDatasetGenerator, Dataset, Discrete, Continuous
 from utils.fullstate import fullstate
@@ -55,6 +56,7 @@ class PredictionResult:
     states: AbstractStateSeries  # length: T
     y_mlt_arr: np.ndarray  # (T, n_out)
     y_pred_mlt_arr: np.ndarray  # (T, n_out)
+    n_washout: int
 
     # noinspection DuplicatedCode
     def __post_init__(self):
@@ -85,6 +87,17 @@ class PredictionResult:
         self.y_pred_mlt_arr = self.y_pred_mlt_arr.copy()
         self.y_pred_mlt_arr.setflags(write=False)
 
+    def washout_masked(self) -> "PredictionResult":
+        s = slice(self.n_washout, None)
+        return PredictionResult(
+            t_arr=self.t_arr[s],
+            u_mlt_arr=self.u_mlt_arr[s],
+            states=self.states[s],
+            y_mlt_arr=self.y_mlt_arr[s],
+            y_pred_mlt_arr=self.y_pred_mlt_arr[s],
+            n_washout=0,
+        )
+
     @cache
     def score(
             self,
@@ -113,6 +126,10 @@ class PredictionResultSet:
     def __getitem__(self, sample_index: int):
         return self._results[sample_index]
 
+    def washout_masked(self) -> "PredictionResultSet":
+        return PredictionResultSet([r.washout_masked() for r in self._results])
+
+    # TODO: aggregated_score must return float
     @cache
     def aggregated_score(
             self,
@@ -133,12 +150,22 @@ class AbstractEstimator(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def fit(self, datasets: Iterable[Dataset], *, show_progress=False) -> list[PredictionResult]:
+    def fit(
+            self,
+            datasets: Sequence[Dataset],
+            *,
+            show_progress=False,
+    ) -> list[PredictionResult]:
         raise NotImplementedError()
 
     @abstractmethod
-    def predict(self, dataset: Dataset, *, show_progress=False,
-                state_comp_result: StateComputationResult = None) -> PredictionResult:
+    def predict(
+            self,
+            datasets: Sequence[Dataset],
+            *,
+            show_progress=False,
+            state_comp_result: Sequence[StateComputationResult | None] | None = None,
+    ) -> list[PredictionResult]:
         raise NotImplementedError()
 
 
@@ -159,7 +186,7 @@ class NVQRCEstimator(AbstractEstimator):
 
     @classmethod
     def _create_solver(cls, *, param: NVQRCParam, system: AbstractPhysicalSystem):
-        return TimeEvolutionSolver(
+        return create_time_evol_solver(
             system=system,
             observable=reduce(
                 lambda x, y: x + y,
@@ -175,19 +202,29 @@ class NVQRCEstimator(AbstractEstimator):
             init_psi=fullstate(",".join(["z+"] * param.n_qubits)),
         )
 
-    def __init__(self, *, param: NVQRCParam, seed: int, n_washout: int):
+    def __init__(
+            self,
+            *,
+            param: NVQRCParam,
+            seed: int,
+            n_washout: int,
+            n_cpu: int,
+    ):
+        assert n_cpu == -1 or n_cpu >= 1, f"invalid {n_cpu=}"
+
         self._param = param
         self._seed = seed
         self._n_washout = n_washout
+        self._n_cpu = n_cpu
+
         self._lr_model = LinearRegression()
         self._system = self._create_system(param=param, seed=seed)
         self._solver = self._create_solver(param=param, system=self._system)
+        self._time_evol_series_computer = get_compute_time_evol_state_series_service()
 
-    @classmethod
     def _get_time_evol_states(
-            cls,
+            self,
             *,
-            solver: TimeEvolutionSolver,
             n_mpx: int,
             u_t: Continuous,
             t_arr: Discrete,
@@ -198,7 +235,6 @@ class NVQRCEstimator(AbstractEstimator):
         QRC状態系列と出力時刻配列を計算する。
 
         Args:
-            solver (TimeEvolutionSolver): 時間発展を計算するソルバー。
             n_mpx (int): 各時刻区間を分割する数（マルチプレクサ数）。
             u_t (np.ndarray): 入力信号配列。
             t_arr (np.ndarray): 時刻配列。
@@ -208,39 +244,38 @@ class NVQRCEstimator(AbstractEstimator):
         Returns:
             tuple[np.ndarray, QRCStateSeries]: 出力時刻配列とQRC状態系列。
         """
-        # QRC状態と出力時刻配列の初期化
-        steps: list[QRCStateTimeStep] = []
+        return self._time_evol_series_computer.execute(
+            solver=self._solver,
+            n_mpx=n_mpx,
+            u_t=u_t,
+            t_arr=t_arr,
+            reset_state=reset_state,
+            tqdm_title=tqdm_title,
+        )
 
-        # 状態をリセットする場合
-        if reset_state:
-            solver.reset_rho()
+    # TODO: ↕の_get_time_evol_statesのみをサービスとして切り出してテストを作り、一致を確認 非stiffなデータを使用しているから？
 
-        valid_time_mask = np.zeros(len(t_arr), dtype=bool)
-        valid_time_mask[:-2] = True  # mesolveが後方の時刻を参照するため少し前で止める
+    def _check_state_count(self, states: AbstractStateSeries):
+        observable_count = sum([
+            int(self._param.obs_x),
+            int(self._param.obs_y),
+            int(self._param.obs_z),
+        ])
+        expected_state_count = self._param.n_mpx * observable_count * self._param.n_qubits
+        assert states.n_states == expected_state_count, (
+            f"Invalid state count: expected {expected_state_count} states "
+            f"(n_mpx={self._param.n_mpx} * observables={observable_count} "
+            f"* n_qubits={self._param.n_qubits}), but got {states.n_states} states"
+        )
 
-        # 進捗バーの設定（必要な場合）
-        it = range(np.count_nonzero(valid_time_mask))
-        if tqdm_title:
-            it = tqdm(it, desc=tqdm_title)
-
-        # 各時刻区間ごとに時間発展を計算し、QRC状態を記録
-        for i in it:
-            # ステップの開始時刻から終了時刻まで時間発展させて、各時刻における結果を得る
-            t_begin, t_end = t_arr[i], t_arr[i + 1]
-            t_div = np.linspace(t_begin, t_end, n_mpx + 1)[:-1]
-            result = solver.forward(u_t, t_div)
-
-            # 各観測量の期待値をまとめて配列化（shape: (n_mpx, n_expect)）
-            states = np.stack([result.expect(j) for j in range(result.n_expect)], axis=1)
-            steps.append(QRCStateTimeStep(states=states))
-
-        # 出力時刻配列とQRC状態列を返す
-        return valid_time_mask, QRCStateSeries(steps=steps)
-
-    def _compute_states(self, dataset: Dataset, *,
-                        tqdm_title: str | None = None) -> StateComputationResult:
+    def _compute_single_states(
+            self,
+            dataset: Dataset,
+            *,
+            tqdm_title: str | None = None,
+    ) -> StateComputationResult:
         """
-        Compute QRC state series for the specified dataset.
+        Compute QRC state series for a single dataset.
 
         Args:
             dataset (Dataset): Input dataset containing time array, input signal, and target output.
@@ -252,13 +287,13 @@ class NVQRCEstimator(AbstractEstimator):
         """
         u_arr, y_arr, t_arr, u_t = dataset.u_arr, dataset.y_arr, dataset.t_arr, dataset.u_t
         valid_time_mask, states = self._get_time_evol_states(
-            solver=self._solver,
             n_mpx=self._param.n_mpx,
             u_t=u_t,
             t_arr=t_arr,
             reset_state=True,
             tqdm_title=tqdm_title,
         )
+        self._check_state_count(states)
         t_arr = t_arr[valid_time_mask]
         u_arr = u_arr[valid_time_mask]
         y_arr = y_arr[valid_time_mask]
@@ -269,23 +304,59 @@ class NVQRCEstimator(AbstractEstimator):
             y_mlt_arr=y_arr[:, None],
         )
 
-    def fit(self, datasets: Iterable[Dataset], *, show_progress=True) -> list[PredictionResult]:
+    def _compute_states(
+            self,
+            datasets: Sequence[Dataset],
+            *,
+            tqdm_title: str | None = None,
+    ) -> list[StateComputationResult]:
+        """
+        Compute QRC state series for multiple datasets in parallel.
+
+        Args:
+            datasets (Sequence[Dataset]): Input datasets containing time array, input signal, and target output.
+            tqdm_title (str | None, optional): Title for progress bar. If None, no progress bar is shown.
+
+        Returns:
+            list[StateComputationResult]: List of result objects containing computed state series and related data.
+        """
+        if self._n_cpu == 1:
+            return [
+                self._compute_single_states(dataset, tqdm_title=tqdm_title)
+                for dataset in datasets
+            ]
+        else:
+            return Parallel(n_jobs=-1)(
+                delayed(self._compute_single_states)(dataset, tqdm_title=tqdm_title)
+                for dataset in datasets
+            )
+
+    def fit(
+            self,
+            datasets: Sequence[Dataset],
+            *,
+            show_progress=True,
+    ) -> list[PredictionResult]:
         """
         複数のデータセットを用いてモデルを学習する。
 
         Args:
-            datasets (Iterable[Dataset]): 学習に用いるデータセットのイテラブル。
+            datasets (Sequence[Dataset]): 学習に用いるデータセットのシーケンス。
             show_progress (bool, optional): 進捗バーを表示するかどうか。デフォルトはFalse。
 
         Returns:
             Self: 学習済みのインスタンス自身を返す。
         """
-        x_lst, y_lst, state_comp_results = [], [], []
-        for i, dataset in enumerate(datasets):
-            result = self._compute_states(dataset, tqdm_title="fit" if show_progress else None)
+        # 複数のデータセットの状態を並列計算
+        state_comp_results = self._compute_states(
+            datasets,
+            tqdm_title="fit" if show_progress else None
+        )
+
+        x_lst, y_lst = [], []
+        for result in state_comp_results:
             x_mlt_arr = np.array(result.states)
             y_mlt_arr = result.y_mlt_arr
-            state_comp_results.append(result)
             x_lst.append(x_mlt_arr)
             y_lst.append(y_mlt_arr)
 
@@ -297,43 +368,81 @@ class NVQRCEstimator(AbstractEstimator):
         self._lr_model.fit(x_all, y_all)
 
         # 予測
-        results = []
-        for dataset, state_comp_result in zip(datasets, state_comp_results):
-            result = self.predict(dataset, state_comp_result=state_comp_result)
-            results.append(result)
+        results = self.predict(datasets, state_comp_result=state_comp_results)
         return results
 
-    def predict(self, dataset: Dataset, *, show_progress=True,
-                state_comp_result: StateComputationResult = None) -> PredictionResult:
+    def predict(
+            self,
+            datasets: Sequence[Dataset],
+            *,
+            show_progress=False,
+            state_comp_result: Sequence[StateComputationResult | None] | None = None,
+    ) -> list[PredictionResult]:
         """
         指定したデータセットに対して予測を行う。
 
         Args:
-            dataset (Dataset): 予測対象のデータセット。
-            show_progress (bool, optional): 進捗バーを表示するかどうか。デフォルトはFalse。
+            datasets (Sequence[Dataset]): 予測対象のデータセットのシーケンス。
+            show_progress (bool, optional): 進捗バーを表示するかどうか。デフォルトはTrue。
+            state_comp_result (list[StateComputationResult | None] | None, optional): 
+                事前に計算したStateComputationResultのリスト。
+                Noneの場合は全て新たに計算される。
+                リストの場合、Noneの要素に対応するデータセットのみ新たに計算される。
+                デフォルトはNone。
 
         Returns:
-            PredictionResult: 予測結果を格納したRegressionResultインスタンス。
+            list[PredictionResult]: 予測結果を格納したPredictionResultインスタンスのリスト。
         """
-        # QRC状態系列と出力時刻配列を取得し、出力時刻に対応するデータのみ抽出
+        # QRC状態系列と出力時刻配列を取得
         if state_comp_result is None:
-            result = self._compute_states(dataset, tqdm_title="predict" if show_progress else None)
+            # 全てのデータセットで計算
+            state_comp_results = self._compute_states(
+                datasets,
+                tqdm_title="predict" if show_progress else None
+            )
         else:
-            result = state_comp_result
-        x_mlt_arr = np.array(result.states)
-        y_mlt_arr = result.y_mlt_arr
+            # 一部のデータセットのみ計算が必要
+            state_comp_results = list(state_comp_result)  # コピーを作成
 
-        # 線形回帰モデルによる予測
-        y_pred_arr = self._lr_model.predict(x_mlt_arr)
+            # Noneの要素を特定し、対応するデータセットを抽出
+            datasets_to_compute = []
+            indices_to_compute = []
+            for i, result in enumerate(state_comp_results):
+                if result is None:
+                    datasets_to_compute.append(datasets[i])
+                    indices_to_compute.append(i)
 
-        # 予測結果をRegressionResultとして返す
-        return PredictionResult(
-            t_arr=result.t_arr,
-            u_mlt_arr=result.u_mlt_arr,
-            states=result.states,
-            y_mlt_arr=y_mlt_arr,
-            y_pred_mlt_arr=y_pred_arr,
-        )
+            # 必要なデータセットで計算を実行
+            if datasets_to_compute:
+                computed_results = self._compute_states(
+                    datasets_to_compute,
+                    tqdm_title="predict" if show_progress else None
+                )
+
+                # 計算結果を適切な位置に配置
+                for idx, computed_result in zip(indices_to_compute, computed_results):
+                    state_comp_results[idx] = computed_result
+
+        # 各データセットに対して予測を実行
+        results = []
+        for result in state_comp_results:
+            x_mlt_arr = np.array(result.states)
+            y_mlt_arr = result.y_mlt_arr
+
+            # 線形回帰モデルによる予測
+            y_pred_arr = self._lr_model.predict(x_mlt_arr)
+
+            # 予測結果をPredictionResultとして返す
+            prediction_result = PredictionResult(
+                t_arr=result.t_arr,
+                u_mlt_arr=result.u_mlt_arr,
+                states=result.states,
+                y_mlt_arr=y_mlt_arr,
+                y_pred_mlt_arr=y_pred_arr,
+                n_washout=self._n_washout,
+            )
+            results.append(prediction_result)
+        return results
 
 
 class AbstractExperimentSuite(ABC):
@@ -387,16 +496,15 @@ class PredictionExperimentSuite(AbstractExperimentSuite):
             dataset = self._generator_fn(self._rng).create()
             datasets_test.append(dataset)
 
-        # Create and fit model on training data
+        # Create estimator
         model = self._model_class(**self._model_kwargs)
+
+        # Create and fit model on training data
         results_train = model.fit(datasets_train, show_progress=self._show_progress)
         self._results_train = PredictionResultSet(results_train)
 
         # Get predictions on test data
-        results_test = []
-        for dataset in datasets_test:
-            result = model.predict(dataset, show_progress=self._show_progress)
-            results_test.append(result)
+        results_test = model.predict(datasets_test, show_progress=self._show_progress)
         self._results_test = PredictionResultSet(results_test)
 
         self._run = True

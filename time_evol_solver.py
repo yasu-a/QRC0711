@@ -1,3 +1,5 @@
+from abc import abstractmethod, ABC
+
 import numpy as np
 import qutip
 from numpy.typing import ArrayLike
@@ -6,9 +8,28 @@ from physical_system import AbstractPhysicalSystem, AbstractObservable, Abstract
 from utils.app_logging import create_logger
 
 
-class TimeEvolutionSolver:
-    _logger = create_logger()
+class ForwardResult:
+    def __init__(self, *, expect, final_state):
+        # Store expectation values and final state
+        self._expect = expect  # List of expectation values for observables
+        self._final_state = final_state  # Final density matrix
 
+    @property
+    def n_expect(self) -> int:
+        # Number of observables we got expectations for
+        return len(self._expect)
+
+    def expect(self, i) -> np.ndarray:
+        # Get an array of i-th expectation value
+        return self._expect[i]
+
+    @property
+    def final_rho(self) -> qutip.Qobj:
+        # Get final density matrix state
+        return self._final_state
+
+
+class AbstractTimeEvolutionSolver(ABC):
     def __init__(
             self,
             *,
@@ -20,36 +41,58 @@ class TimeEvolutionSolver:
         self._system = system
         self._observable = observable
         self._collapse_operator = collapse_operator
+        self._init_psi = init_psi
+
+    @abstractmethod
+    def reset_state(self) -> None:
+        """Reset the solver state back to initial conditions.
+        
+        This resets any internal state like density matrices back to their initial values,
+        allowing the solver to be reused for multiple forward passes from the same starting point.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def forward(self, u_t: ArrayLike, t_arr: ArrayLike) -> ForwardResult:
+        """Solve quantum master equation and get expectation values of observables.
+
+        Args:
+            u_t: Time-dependent coefficients for the Hamiltonian
+            t_arr: Array of time points to evaluate at
+
+        Returns:
+            ForwardResult containing expectation values and final quantum state
+        """
+        raise NotImplementedError()
+
+
+class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
+    _logger = create_logger()
+
+    def __init__(
+            self,
+            *,
+            system: AbstractPhysicalSystem,
+            observable: AbstractObservable,
+            collapse_operator: AbstractCollapseOperator,
+            init_psi: qutip.Qobj,
+    ):
+        super().__init__(
+            system=system,
+            observable=observable,
+            collapse_operator=collapse_operator,
+            init_psi=init_psi,
+        )
 
         # Create initial density matrix from pure state
         # noinspection PyTypeChecker
-        self._init_rho = init_psi * init_psi.dag()
+        self._init_rho = self._init_psi * self._init_psi.dag()
         self._rho = self._init_rho
 
         # Flag to track if imaginary value warning has been shown
         self._large_expect_imag_warned = False
 
-    class ForwardResult:
-        def __init__(self, *, expect, final_state):
-            # Store expectation values and final state
-            self._expect = expect  # List of expectation values for observables 
-            self._final_state = final_state  # Final density matrix
-
-        @property
-        def n_expect(self) -> int:
-            # Number of observables we got expectations for
-            return len(self._expect)
-
-        def expect(self, i) -> np.ndarray:
-            # Get an array of i-th expectation value
-            return self._expect[i]
-
-        @property
-        def final_rho(self) -> qutip.Qobj:
-            # Get final density matrix state
-            return self._final_state
-
-    def reset_rho(self):
+    def reset_state(self) -> None:
         # Reset density matrix to initial state
         self._rho = self._init_rho
 
@@ -74,7 +117,7 @@ class TimeEvolutionSolver:
             new_expect.append(e_arr)
         return new_expect
 
-    def forward(self, u_t, t_arr) -> ForwardResult:
+    def forward(self, u_t: ArrayLike, t_arr: ArrayLike) -> ForwardResult:
         # Calculate average time step
         avg_step = np.mean(np.diff(t_arr))
         self._logger.debug(
@@ -90,13 +133,37 @@ class TimeEvolutionSolver:
             tlist=t_arr,
             c_ops=self._collapse_operator.create_hamiltonian(),
             e_ops=self._observable.create_hamiltonian(),
-            options=dict(store_final_state=True)
+            options=dict(
+                store_final_state=True,
+                # progress_bar="tqdm",
+            ),
         )
 
         # Package results and update system state
-        result = self.ForwardResult(
+        result = ForwardResult(
             expect=self._coerce_expect(result.expect),
             final_state=result.final_state,  # 期待値に虚部が含まれることがある
         )
         self._rho = result.final_rho
         return result
+
+
+_SOLVER_MAPPING: dict[str, type[AbstractTimeEvolutionSolver]] = {
+    "qutip-mesolve": QutipMESolveTimeEvolutionSolver,
+}
+
+
+def create_time_evol_solver(
+        *,
+        system: AbstractPhysicalSystem,
+        observable: AbstractObservable,
+        collapse_operator: AbstractCollapseOperator,
+        init_psi: qutip.Qobj,
+        backend: str = "qutip-mesolve",
+) -> AbstractTimeEvolutionSolver:
+    return _SOLVER_MAPPING[backend](
+        system=system,
+        observable=observable,
+        collapse_operator=collapse_operator,
+        init_psi=init_psi,
+    )
