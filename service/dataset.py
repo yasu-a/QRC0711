@@ -179,6 +179,56 @@ class DelayedSineDatasetGenerator(AbstractContinuousDatasetGenerator):  # 本質
         return y_t
 
 
+class DelayedSineDiscreteDatasetGenerator(AbstractDiscreteDatasetGenerator):
+    def __init__(
+            self,
+            *,
+            t_max: float,
+            t_step: float,
+            freq: float,
+            phase_offset: float,
+            discrete_lag: float,
+            amplitude: float,
+    ):
+        super().__init__(t_max=t_max, t_step=t_step)
+
+        self._freq = freq
+        self._phase_offset = phase_offset
+        self._discrete_lag = discrete_lag
+        self._amplitude = amplitude
+
+        self._delayed_sine = DelayedSineDatasetGenerator(
+            t_max=t_max,
+            t_step=t_step,
+            freq=freq,
+            phase_offset=phase_offset,
+            discrete_lag=discrete_lag,
+            amplitude=amplitude,
+        )
+
+    @property
+    def name(self) -> str:
+        return f"DelayedSineDiscrete({self._discrete_lag})"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return dict(
+            **super().parameters,
+            freq=self._freq,
+            phase_offset=self._phase_offset,
+            discrete_lag=self._discrete_lag,
+            amplitude=self._amplitude,
+        )
+
+    @property
+    def u_seq(self) -> Discrete:
+        return self._delayed_sine.u_seq
+
+    @property
+    def y_true_seq(self) -> Discrete:
+        return self._delayed_sine.y_true_seq
+
+
 class NoisyDelayedSineDatasetGenerator(DelayedSineDatasetGenerator):
     def __init__(
             self,
@@ -196,10 +246,10 @@ class NoisyDelayedSineDatasetGenerator(DelayedSineDatasetGenerator):
         super().__init__(
             t_max=t_max,
             t_step=t_step,
-            freq=freq,
+            freq=freq, 
             phase_offset=phase_offset,
             discrete_lag=discrete_lag,
-            amplitude=amplitude,
+            amplitude=amplitude, 
         )
 
         self._noise_std = noise_std
@@ -273,8 +323,7 @@ class DelayedRandomDatasetGenerator(AbstractDiscreteDatasetGenerator):  # 本質
     @property
     def parameters(self) -> dict[str, Any]:
         return dict(
-            t_max=self._t_max,
-            t_step=self._t_step,
+            **super().parameters,
             discrete_lag=self._discrete_lag,
             low=self._low,
             high=self._high,
@@ -490,6 +539,15 @@ def _preview_dataset():
         amplitude=1,
     )
 
+    ds_delayed_sine_discrete = DelayedSineDiscreteDatasetGenerator(
+        t_max=t_max,
+        t_step=t_step,
+        freq=1,
+        phase_offset=np.pi / 2,
+        discrete_lag=discrete_lag,
+        amplitude=1,
+    )
+
     ds_noisy_delayed_sine = NoisyDelayedSineDatasetGenerator(
         t_max=t_max,
         t_step=t_step,
@@ -516,6 +574,7 @@ def _preview_dataset():
 
     ds_lst = [
         (f"DelayedSine({discrete_lag})", ds_delayed_sine),
+        (f"DelayedSineDiscrete({discrete_lag})", ds_delayed_sine_discrete),
         (f"NoisyDelayedSine({discrete_lag}, {noise_std})", ds_noisy_delayed_sine),
         (f"DelayedRandom({discrete_lag})", ds_delayed_random),
         (f"ParityCheck({discrete_lag})", ds_parity_check),

@@ -10,7 +10,8 @@ from experiment.estimator.nvqrc import NVQRCEstimator
 from experiment.suite.prediction import PredictionExperimentSuite
 from model.param import NVQRCParam
 from model.prediction_result import PredictionResultSet
-from service.dataset import NoisyDelayedSineDatasetGenerator, DelayedRandomDatasetGenerator
+from service.dataset import NoisyDelayedSineDatasetGenerator, DelayedRandomDatasetGenerator, \
+    DelayedSineDiscreteDatasetGenerator
 from service.visualize import plot_state_series, plot_prediction
 
 """
@@ -27,7 +28,6 @@ MPX1単位の相互作用時間はt_delta/n_mpx
 
 def create_generator_fn(
         func_type: Literal["lagged_sine", "lagged_random_uniform"],
-        param: NVQRCParam,
         t_max: float,
         n_steps: int,
 ):
@@ -38,10 +38,20 @@ def create_generator_fn(
                 t_step=t_max / n_steps,
                 freq=1.0,
                 phase_offset=rng.uniform(0, 2 * np.pi),
-                discrete_lag=5 * param.n_mpx,
+                discrete_lag=5,
                 amplitude=1.0,
                 noise_std=0.000,
                 rng=rng,
+            )
+    elif func_type == "lagged_sine_discrete":
+        def generator_fn(rng: np.random.RandomState):
+            return DelayedSineDiscreteDatasetGenerator(
+                t_max=t_max,
+                t_step=t_max / n_steps,
+                freq=1.0,
+                phase_offset=rng.uniform(0, 2 * np.pi),
+                discrete_lag=5,
+                amplitude=1.0,
             )
     elif func_type == "lagged_random_uniform":
         def generator_fn(rng: np.random.RandomState):
@@ -73,7 +83,6 @@ def run_qrc_experiment(
 ) -> tuple[PredictionResultSet, PredictionResultSet]:
     generator_fn = create_generator_fn(
         func_type=func_type,
-        param=param,
         t_max=t_max,
         n_steps=n_steps,
     )
@@ -104,6 +113,7 @@ run_qrc_experiment = partial(
     n_samples_train=8,
     n_samples_test=4,
     n_washout=150,
+    # func_type="lagged_sine_discrete",
     func_type="lagged_sine",
     seed=0,
 )

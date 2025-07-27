@@ -117,7 +117,6 @@ def plot_prediction_time_series(
             alpha=0.7,
             linewidth=1,
             color="gray",
-            ls="--"
         )
 
     # 出力系列（真値・予測値）のプロット
