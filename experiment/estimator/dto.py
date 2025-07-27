@@ -2,35 +2,35 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from model.state_series import AbstractStateSeries
+from model.state_array import AbstractState2DArray
 
 
 @dataclass(slots=True)
 class StateComputationResult:
-    t_arr: np.ndarray  # (T,)
-    u_mlt_arr: np.ndarray  # (T, n_in)
-    states: AbstractStateSeries  # length: T
-    y_mlt_arr: np.ndarray  # (T, n_out)
+    t_seq: np.ndarray  # (T,)
+    u_seq_n: np.ndarray  # (T, n_in)
+    x_seq_n: AbstractState2DArray  # length: (T, n_state)
+    y_seq_n: np.ndarray  # (T, n_out)
 
     # noinspection DuplicatedCode
     def __post_init__(self):
-        assert isinstance(self.t_arr, np.ndarray), (type(self.t_arr), self.t_arr)
-        assert isinstance(self.u_mlt_arr, np.ndarray), (type(self.u_mlt_arr), self.u_mlt_arr)
-        assert isinstance(self.states, AbstractStateSeries), (type(self.states), self.states)
-        assert isinstance(self.y_mlt_arr, np.ndarray), (type(self.y_mlt_arr), self.y_mlt_arr)
+        assert isinstance(self.t_seq, np.ndarray), (type(self.t_seq), self.t_seq)
+        assert isinstance(self.u_seq_n, np.ndarray), (type(self.u_seq_n), self.u_seq_n)
+        assert isinstance(self.x_seq_n, AbstractState2DArray), (type(self.x_seq_n), self.x_seq_n)
+        assert isinstance(self.y_seq_n, np.ndarray), (type(self.y_seq_n), self.y_seq_n)
 
-        n_t = len(self.t_arr)
-        assert self.t_arr.ndim == 1, self.t_arr.shape
-        assert self.u_mlt_arr.ndim == 2, self.u_mlt_arr.shape
-        assert self.u_mlt_arr.shape[0] == n_t, (self.u_mlt_arr.shape[0], n_t)
-        assert len(self.states) == n_t, (len(self.states), n_t)
-        assert self.y_mlt_arr.ndim == 2, self.y_mlt_arr.shape
-        assert self.y_mlt_arr.shape[0] == n_t, (self.y_mlt_arr.shape[0], n_t)
+        n_t = len(self.t_seq)
+        assert self.t_seq.ndim == 1, self.t_seq.shape
+        assert self.u_seq_n.ndim == 2, self.u_seq_n.shape
+        assert self.u_seq_n.shape[0] == n_t, (self.u_seq_n.shape[0], n_t)
+        assert len(self.x_seq_n) == n_t, (len(self.x_seq_n), n_t)
+        assert self.y_seq_n.ndim == 2, self.y_seq_n.shape
+        assert self.y_seq_n.shape[0] == n_t, (self.y_seq_n.shape[0], n_t)
 
         # copy arrays and make readonly
-        self.t_arr = self.t_arr.copy()
-        self.t_arr.setflags(write=False)
-        self.u_mlt_arr = self.u_mlt_arr.copy()
-        self.u_mlt_arr.setflags(write=False)
-        self.y_mlt_arr = self.y_mlt_arr.copy()
-        self.y_mlt_arr.setflags(write=False)
+        self.t_seq = self.t_seq.copy()
+        self.t_seq.setflags(write=False)
+        self.u_seq_n = self.u_seq_n.copy()
+        self.u_seq_n.setflags(write=False)
+        self.y_seq_n = self.y_seq_n.copy()
+        self.y_seq_n.setflags(write=False)

@@ -1,4 +1,5 @@
 from abc import abstractmethod, ABC
+from typing import Any
 
 import numpy as np
 import qutip
@@ -54,15 +55,18 @@ class AbstractTimeEvolutionSolver(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def forward(self, u_t: ArrayLike, t_arr: ArrayLike) -> ForwardResult:
-        """Solve quantum master equation and get expectation values of observables.
+    def forward(self, u_t: ArrayLike, t_seq: ArrayLike, *, pbar_title: str | None = None) \
+            -> ForwardResult:
+        """
+        Solve the quantum master equation and obtain the time series of expectation values for observables.
 
         Args:
-            u_t: Time-dependent coefficients for the Hamiltonian
-            t_arr: Array of time points to evaluate at
+            u_t (ArrayLike): Time-dependent coefficients for the Hamiltonian.
+            t_seq (ArrayLike): Array of time points to evaluate.
+            pbar_title (str | None, optional): Title for the progress bar (optional).
 
         Returns:
-            ForwardResult containing expectation values and final quantum state
+            ForwardResult: Result containing the expectation value series and the final quantum state.
         """
         raise NotImplementedError()
 
@@ -118,26 +122,32 @@ class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
             new_expect.append(e_arr)
         return new_expect
 
-    def forward(self, u_t: ArrayLike, t_arr: ArrayLike) -> ForwardResult:
+    def forward(self, u_t: ArrayLike, t_seq: ArrayLike, *, pbar_title: str | None = None) \
+            -> ForwardResult:
         # Calculate average time step
-        avg_step = np.mean(np.diff(t_arr))
+        avg_step = np.mean(np.diff(t_seq))
         self._logger.debug(
             f"Forward: "
-            f"t_arr={len(t_arr)} points from {t_arr[0]} to {t_arr[-1]}, "
+            f"t_arr={len(t_seq)} points from {t_seq[0]} to {t_seq[-1]}, "
             f"avg_step={avg_step:.6f}"
         )
+
+        # Set options
+        options: dict[str, Any] = {
+            "store_final_state": True,
+            "progress_bar": "tqdm",
+        }
+        if pbar_title is not None:
+            options["progress_kwargs"] = {"desc": pbar_title}
 
         # Solve quantum master equation
         result = qutip.mesolve(
             H=self._system.create_hamiltonian(td_coeff=u_t),
             rho0=self._rho,
-            tlist=t_arr,
+            tlist=t_seq,
             c_ops=self._collapse_operator.create_hamiltonian(),
             e_ops=self._observable.create_hamiltonian(),
-            options=dict(
-                store_final_state=True,
-                # progress_bar="tqdm",
-            ),
+            options=options,
         )
 
         # Package results and update system state

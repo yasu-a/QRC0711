@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from core.time_evol_solver import AbstractTimeEvolutionSolver
 from model.dataset import Discrete, Continuous
-from model.state_series import QRCStateTimeStep, QRCStateSeries
+from model.state_array import QRCStateTimeStep, QRCStateArray
 
 
 class AbstractComputeTimeEvolStateSeriesService(ABC):
@@ -19,7 +19,7 @@ class AbstractComputeTimeEvolStateSeriesService(ABC):
             t_arr: Discrete,
             reset_state: bool = True,
             tqdm_title: str | None = None,
-    ) -> tuple[np.ndarray, QRCStateSeries]:
+    ) -> tuple[np.ndarray, QRCStateArray]:
         """
         Compute QRC state series and output time array.
 
@@ -32,7 +32,7 @@ class AbstractComputeTimeEvolStateSeriesService(ABC):
             tqdm_title (str | None, optional): Title for progress bar. Defaults to None
 
         Returns:
-            tuple[np.ndarray, QRCStateSeries]: Valid time mask array and QRC state series
+            tuple[np.ndarray, QRCStateArray]: Valid time mask array and QRC state series
         """
         raise NotImplementedError()
 
@@ -52,7 +52,7 @@ class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolSta
             t_arr: Discrete,
             reset_state: bool = True,
             tqdm_title: str | None = None,
-    ) -> tuple[np.ndarray, QRCStateSeries]:
+    ) -> tuple[np.ndarray, QRCStateArray]:
         # QRC状態と出力時刻配列の初期化
         steps: list[QRCStateTimeStep] = []
 
@@ -80,7 +80,7 @@ class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolSta
             steps.append(QRCStateTimeStep(states=states))
 
         # 出力時刻配列とQRC状態列を返す
-        return valid_time_mask, QRCStateSeries(steps=steps)
+        return valid_time_mask, QRCStateArray(steps=steps)
 
 
 class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStateSeriesService):
@@ -98,7 +98,7 @@ class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStat
             t_arr: Discrete,
             reset_state: bool = True,
             tqdm_title: str | None = None,
-    ) -> tuple[np.ndarray, QRCStateSeries]:
+    ) -> tuple[np.ndarray, QRCStateArray]:
         # NOTE
         # ====
         #
@@ -120,12 +120,8 @@ class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStat
             ]
         )
 
-        # 1回の呼び出しで全体の時間発展を計算
-        if tqdm_title:
-            # 進捗バーの表示はここで1回だけ
-            print(f"Computing {tqdm_title}...")
-
-        result = solver.forward(u_t, t_all)
+        # 時間発展を解く
+        result = solver.forward(u_t, t_all, pbar_title=tqdm_title)
 
         # 結果を各ステップごとに分割
         steps: list[QRCStateTimeStep] = []
@@ -143,7 +139,7 @@ class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStat
         # 出力時刻配列とQRC状態列を返す
         valid_time_mask = np.zeros(len(t_arr), dtype=bool)
         valid_time_mask[:len(steps)] = True
-        return valid_time_mask, QRCStateSeries(steps=steps)
+        return valid_time_mask, QRCStateArray(steps=steps)
 
 
 # FIXME: DividedForwardを使うかSingleForwardを使うかによって結果が異なる

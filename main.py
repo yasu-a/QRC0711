@@ -106,7 +106,6 @@ run_qrc_experiment = partial(
     n_washout=150,
     func_type="lagged_sine",
     seed=0,
-    show_progress=False,
 )
 
 
@@ -126,11 +125,9 @@ def _param_mapper_fn(d: dict) -> NVQRCParam:
 
 
 def _scorer_fn(p: NVQRCParam) -> float:
-    results_train, results_test = run_qrc_experiment(p, n_cpu=1)
-    results_train = results_train.washout_masked()
-    results_test = results_test.washout_masked()
-    return results_train.aggregated_score("r2").mean() * 0.3 + results_test.aggregated_score(
-        "r2").mean() * 0.7
+    results_train, results_test = run_qrc_experiment(p, n_cpu=1, show_progress=False)
+    return results_train.aggregated_score("r2").mean() * 0.3 \
+        + results_test.aggregated_score("r2").mean() * 0.7
 
 
 def _constraint_predicate_fn(p: NVQRCParam) -> bool:
@@ -184,11 +181,9 @@ def run_search():
 
 def run_preview(best_param):
     # 最良パラメータで実験・グラフ表示
-    train_results, test_results = run_qrc_experiment(best_param)
-    train_results_washout = train_results.washout_masked()
-    test_results_washout = test_results.washout_masked()
-    plot_state_series(train_results_washout[0])
-    plot_prediction([train_results_washout[0], test_results_washout[0]])
+    train_results, test_results = run_qrc_experiment(best_param, show_progress=True)
+    plot_state_series(train_results[0])
+    plot_prediction([train_results[0], test_results[0]])
 
 
 def main():

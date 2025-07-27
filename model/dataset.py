@@ -11,8 +11,8 @@ Continuous = Callable[[Discrete], Discrete]
 class Dataset:
     name: str
     parameters: dict[str, Any]
-    t_arr: Discrete
-    u_arr: Discrete
-    y_arr: Discrete
+    t_seq: Discrete
+    u_seq: Discrete
+    y_true_seq: Discrete
     u_t: Continuous
-    y_t: Continuous
+    y_true_t: Continuous

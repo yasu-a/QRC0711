@@ -15,7 +15,7 @@ from model.param import NVQRCParam
 from model.physical_system import NVReservoirPhysicsSystem, AbstractPhysicalSystem, \
     NVReservoirObservable, NVReservoirCollapseOperator
 from model.prediction_result import PredictionResult
-from model.state_series import QRCStateSeries, AbstractStateSeries
+from model.state_array import QRCStateArray, AbstractState2DArray
 from service.compute_time_evol import get_compute_time_evol_state_series_service
 
 
@@ -77,45 +77,45 @@ class NVQRCEstimator(AbstractEstimator):
             *,
             n_mpx: int,
             u_t: Continuous,
-            t_arr: Discrete,
+            t_seq: Discrete,
             reset_state: bool = True,
             tqdm_title: str | None = None
-    ) -> tuple[np.ndarray, QRCStateSeries]:
+    ) -> tuple[np.ndarray, QRCStateArray]:
         """
         QRC状態系列と出力時刻配列を計算する。
 
         Args:
             n_mpx (int): 各時刻区間を分割する数（マルチプレクサ数）。
             u_t (np.ndarray): 入力信号配列。
-            t_arr (np.ndarray): 時刻配列。
+            t_seq (np.ndarray): 時刻配列。
             reset_state (bool, optional): 状態をリセットするかどうか。デフォルトはTrue。
             tqdm_title (str | None, optional): 進捗バーのタイトル。デフォルトはNone。
 
         Returns:
-            tuple[np.ndarray, QRCStateSeries]: 出力時刻配列とQRC状態系列。
+            tuple[np.ndarray, QRCStateArray]: 出力時刻配列とQRC状態系列。
         """
         return self._time_evol_series_computer.execute(
             solver=self._solver,
             n_mpx=n_mpx,
             u_t=u_t,
-            t_arr=t_arr,
+            t_arr=t_seq,
             reset_state=reset_state,
             tqdm_title=tqdm_title,
         )
 
     # TODO: ↕の_get_time_evol_statesのみをサービスとして切り出してテストを作り、一致を確認 非stiffなデータを使用しているから？
 
-    def _check_state_count(self, states: AbstractStateSeries):
+    def _check_state_count(self, states: AbstractState2DArray):
         observable_count = sum([
             int(self._param.obs_x),
             int(self._param.obs_y),
             int(self._param.obs_z),
         ])
         expected_state_count = self._param.n_mpx * observable_count * self._param.n_qubits
-        assert states.n_states == expected_state_count, (
+        assert states.n_state == expected_state_count, (
             f"Invalid state count: expected {expected_state_count} states "
             f"(n_mpx={self._param.n_mpx} * observables={observable_count} "
-            f"* n_qubits={self._param.n_qubits}), but got {states.n_states} states"
+            f"* n_qubits={self._param.n_qubits}), but got {states.n_state} states"
         )
 
     def _compute_single_states(
@@ -133,25 +133,25 @@ class NVQRCEstimator(AbstractEstimator):
 
         Returns:
             StateComputationResult: Result object containing computed state series and related data
-                including time array, input array, states, and target output array.
+                including time array, input array, x_seq_n, and target output array.
         """
-        u_arr, y_arr, t_arr, u_t = dataset.u_arr, dataset.y_arr, dataset.t_arr, dataset.u_t
-        valid_time_mask, states = self._get_time_evol_states(
+        u_seq, y_seq, t_seq, u_t = dataset.u_seq, dataset.y_true_seq, dataset.t_seq, dataset.u_t
+        valid_time_mask, x_seq_n = self._get_time_evol_states(
             n_mpx=self._param.n_mpx,
             u_t=u_t,
-            t_arr=t_arr,
+            t_seq=t_seq,
             reset_state=True,
             tqdm_title=tqdm_title,
         )
-        self._check_state_count(states)
-        t_arr = t_arr[valid_time_mask]
-        u_arr = u_arr[valid_time_mask]
-        y_arr = y_arr[valid_time_mask]
+        self._check_state_count(x_seq_n)
+        t_seq = t_seq[valid_time_mask]
+        u_seq = u_seq[valid_time_mask]
+        y_seq = y_seq[valid_time_mask]
         return StateComputationResult(
-            t_arr=t_arr,
-            u_mlt_arr=u_arr[:, None],
-            states=states,
-            y_mlt_arr=y_arr[:, None],
+            t_seq=t_seq,
+            u_seq_n=u_seq[:, None],
+            x_seq_n=x_seq_n,
+            y_seq_n=y_seq[:, None],
         )
 
     def _compute_states(
@@ -205,10 +205,10 @@ class NVQRCEstimator(AbstractEstimator):
 
         x_lst, y_lst = [], []
         for result in state_comp_results:
-            x_mlt_arr = np.array(result.states)
-            y_mlt_arr = result.y_mlt_arr
-            x_lst.append(x_mlt_arr)
-            y_lst.append(y_mlt_arr)
+            x_seq_n = result.x_seq_n
+            y_seq_n = result.y_seq_n
+            x_lst.append(x_seq_n)
+            y_lst.append(y_seq_n)
 
         # 全データセットを連結
         x_all = np.concatenate(x_lst, axis=0)
@@ -276,19 +276,19 @@ class NVQRCEstimator(AbstractEstimator):
         # 各データセットに対して予測を実行
         results = []
         for result in state_comp_results:
-            x_mlt_arr = np.array(result.states)
-            y_mlt_arr = result.y_mlt_arr
+            x_seq_n = result.x_seq_n
+            y_true_seq_n = result.y_seq_n
 
             # 線形回帰モデルによる予測
-            y_pred_arr = self._lr_model.predict(x_mlt_arr)
+            y_pred_seq_n = self._lr_model.predict(x_seq_n)
 
             # 予測結果をPredictionResultとして返す
             prediction_result = PredictionResult(
-                t_arr=result.t_arr,
-                u_mlt_arr=result.u_mlt_arr,
-                states=result.states,
-                y_mlt_arr=y_mlt_arr,
-                y_pred_mlt_arr=y_pred_arr,
+                t_seq=result.t_seq,
+                u_seq_n=result.u_seq_n,
+                x_seq_n=result.x_seq_n,
+                y_true_seq_n=y_true_seq_n,
+                y_pred_seq_n=y_pred_seq_n,
                 n_washout=self._n_washout,
             )
             results.append(prediction_result)

@@ -8,7 +8,7 @@ from model.prediction_result import PredictionResult
 
 
 def plot_state_series(
-        result: PredictionResult,
+        r: PredictionResult,
         *,
         x_label: Literal["time", "index"] = "index",
         ax=None,
@@ -17,32 +17,40 @@ def plot_state_series(
     PredictionResultの状態系列（state series）をプロットします。
 
     Args:
-        result (PredictionResult): プロット対象のPredictionResultインスタンス。
+        r (PredictionResult): プロット対象のPredictionResultインスタンス。
         x_label (Literal["time", "index"], optional): x軸に"時間"（"time"）または"インデックス"（"index"）を使用するかを指定します。デフォルトは"index"。
         ax: matplotlibのAxes。Noneの場合は現在のAxesを使用。
 
     Returns:
         bool: プロットが正常に完了した場合はTrueを返します。
     """
-    assert isinstance(result, PredictionResult), type(result)
-
-    # データ取得
-    t_arr = result.t_arr
-    states_array = np.array(result.states)
+    assert isinstance(r, PredictionResult), type(r)
 
     # x軸データの決定
-    x_data = t_arr if x_label == "time" else range(len(t_arr))
+    x_axis_data = r.t_seq if x_label == "time" else np.arange(len(r.t_seq))
 
     if ax is None:
         plt.figure(figsize=(15, 6))  # FIXME: すでにplt.figureが生成されていた場合に整合性が取れない
         ax = plt.gca()
 
     # 状態系列のプロット
-    for i in range(states_array.shape[1]):
-        ax.plot(x_data, states_array[:, i], label=f"State #{i}", lw=1)
+    for i in range(r.n_state):
+        ax.plot(x_axis_data, r.x_seq_n[:, i], label=f"State #{i}", lw=1)
+
+    # washout区間の灰色マスク
+    if r.washout_mask is not None and not np.all(r.washout_mask):
+        y_min, y_max = ax.get_ylim()
+        ax.fill_between(
+            x_axis_data[~r.washout_mask],
+            y_min,
+            y_max,
+            color='gray',
+            alpha=0.2,
+            label='Washout Period'
+        )
 
     # ラベル・タイトル設定
-    ax.set_title(f"States Time Series (n_states={result.states.n_states})")
+    ax.set_title(f"States Time Series (n_state={r.n_state})")
     ax.set_xlabel("Time" if x_label == "time" else "Index")
     ax.set_ylabel("State value")
     ax.legend()
@@ -56,7 +64,7 @@ def plot_state_series(
 
 
 def plot_prediction_time_series(
-        result: PredictionResult,
+        r: PredictionResult,
         *,
         x_label: Literal["time", "index"] = "index",
         out_index: int | list[int] | Literal["all"] | None = None,
@@ -66,7 +74,7 @@ def plot_prediction_time_series(
     PredictionResultの予測時系列（出力系列）をプロットします。
 
     Args:
-        result (PredictionResult): プロット対象のPredictionResultインスタンス。
+        r (PredictionResult): プロット対象のPredictionResultインスタンス。
         x_label (Literal["time", "index"], optional): x軸に"時間"（"time"）または"インデックス"（"index"）を使用するかを指定します。デフォルトは"index"。
         out_index (int | list[int] | Literal["all"] | None, optional): プロットする出力次元。intの場合はその次元、list[int]の場合は複数次元、"all"の場合は全次元、Noneの場合はn_out=1なら0、そうでなければエラー。
         ax: matplotlibのAxes。Noneの場合は現在のAxesを使用。
@@ -77,23 +85,16 @@ def plot_prediction_time_series(
     Raises:
         ValueError: 出力次元が複数でout_indexが指定されていない場合、または不正な型の場合。
     """
-    assert isinstance(result, PredictionResult), type(result)
-
-    # データ取得
-    t_arr = result.t_arr
-    u_arr = result.u_mlt_arr
-    y_true = result.y_mlt_arr
-    y_pred = result.y_pred_mlt_arr
-    n_out = y_true.shape[1]
+    assert isinstance(r, PredictionResult), type(r)
 
     # 出力次元の選択
     if out_index is None:
-        if n_out == 1:
+        if r.n_out == 1:
             out_index = 0
         else:
             raise ValueError("出力の次元が複数の場合は`out_index`を指定してください")
     if out_index == "all":
-        out_indexes = list(range(n_out))
+        out_indexes = list(range(r.n_out))
     elif isinstance(out_index, int):
         out_indexes = [out_index]
     elif isinstance(out_index, list):
@@ -102,16 +103,16 @@ def plot_prediction_time_series(
         raise ValueError(f"不正な`out_index`型: {type(out_index)}")
 
     # x軸データの決定
-    x_data = t_arr if x_label == "time" else range(len(t_arr))
+    x_axis_data = r.t_seq if x_label == "time" else np.arange(len(r.t_seq))
 
     if ax is None:
         ax = plt.gca()
 
     # 入力系列のプロット
-    for i in range(u_arr.shape[1]):
+    for i in range(r.n_in):
         ax.plot(
-            x_data,
-            u_arr[:, i],
+            x_axis_data,
+            r.u_seq_n[:, i],
             label=f'u (#{i})',
             alpha=0.7,
             linewidth=1,
@@ -122,18 +123,30 @@ def plot_prediction_time_series(
     # 出力系列（真値・予測値）のプロット
     for i in out_indexes:
         line, = ax.plot(
-            x_data,
-            y_true[:, i],
-            label=f'y_true (#{i})',
+            x_axis_data,
+            r.y_true_seq_n[:, i],
+            label=f'y_true_seq_n (#{i})',
             lw=0.7,
             ls="--"
         )
         ax.plot(
-            x_data,
-            y_pred[:, i],
-            label=f'y_pred (#{i})',
+            x_axis_data,
+            r.y_pred_seq_n[:, i],
+            label=f'y_pred_seq_n (#{i})',
             lw=0.7,
             color=line.get_color()
+        )
+
+    # washout区間の灰色マスク
+    if r.washout_mask is not None and not np.all(r.washout_mask):
+        y_min, y_max = ax.get_ylim()
+        ax.fill_between(
+            x_axis_data[~r.washout_mask],
+            y_min,
+            y_max,
+            color='gray',
+            alpha=0.2,
+            label='Washout Period'
         )
 
     # ラベル・タイトル・レイアウト調整
@@ -146,7 +159,7 @@ def plot_prediction_time_series(
 
 
 def plot_prediction_vs_ground_truth(
-        result: PredictionResult,
+        r: PredictionResult,
         *,
         out_index: int | list[int] | Literal["all"] | None = None,
         ax=None,
@@ -155,7 +168,7 @@ def plot_prediction_vs_ground_truth(
     PredictionResultの予測値と真値の散布図（予測vs真値）をプロットします。
 
     Args:
-        result (PredictionResult): プロット対象のPredictionResultインスタンス。
+        r (PredictionResult): プロット対象のPredictionResultインスタンス。
         out_index (int | list[int] | Literal["all"] | None, optional): プロットする出力次元。intの場合はその次元、list[int]の場合は複数次元、"all"の場合は全次元、Noneの場合はn_out=1なら0、そうでなければエラー。
         ax: matplotlibのAxes。Noneの場合は現在のAxesを使用。
 
@@ -165,21 +178,16 @@ def plot_prediction_vs_ground_truth(
     Raises:
         ValueError: 出力次元が複数でout_indexが指定されていない場合、または不正な型の場合。
     """
-    assert isinstance(result, PredictionResult), type(result)
-
-    # データ取得
-    y_true_arr = result.y_mlt_arr
-    y_pred_arr = result.y_pred_mlt_arr
-    n_out = y_true_arr.shape[1]
+    assert isinstance(r, PredictionResult), type(r)
 
     # 出力次元の選択
     if out_index is None:
-        if n_out == 1:
+        if r.n_out == 1:
             out_index = 0
         else:
             raise ValueError("出力の次元が複数の場合は`out_index`を指定してください")
     if out_index == "all":
-        out_indexes = list(range(n_out))
+        out_indexes = list(range(r.n_out))
     elif isinstance(out_index, int):
         out_indexes = [out_index]
     elif isinstance(out_index, list):
@@ -188,7 +196,7 @@ def plot_prediction_vs_ground_truth(
         raise ValueError(f"不正な`out_index`型: {type(out_index)}")
 
     # R2スコア計算
-    r2 = r2_score_2d(y_true=y_true_arr, y_pred=y_pred_arr)
+    r2 = r2_score_2d(y_true=r.y_true_seq_n, y_pred=r.y_pred_seq_n)
     if isinstance(r2, (list, tuple, float)) or (hasattr(r2, 'shape') and r2.shape == ()):  # scalar
         r2_str = f"$R^2={float(r2):.3f}$"
     else:
@@ -199,11 +207,27 @@ def plot_prediction_vs_ground_truth(
 
     # 散布図の作成
     for i in out_indexes:
-        ax.scatter(y_true_arr[:, i], y_pred_arr[:, i], alpha=0.3, s=2, label=f"out#{i}")
+        # washout区間のデータは灰色でプロット
+        ax.scatter(
+            r.y_true_seq_n[~r.washout_mask, i],
+            r.y_pred_seq_n[~r.washout_mask, i],
+            alpha=0.3,
+            s=2,
+            color='gray',
+            label=f"out#{i} (washout)"
+        )
+        # washout以降のデータは通常色でプロット
+        ax.scatter(
+            r.y_true_seq_n[r.washout_mask, i],
+            r.y_pred_seq_n[r.washout_mask, i],
+            alpha=0.3,
+            s=2,
+            label=f"out#{i}"
+        )
 
     # y=xの補助線の描画
-    y_min = min(y_true_arr.min(), y_pred_arr.min())
-    y_max = max(y_true_arr.max(), y_pred_arr.max())
+    y_min = min(r.y_true_seq_n.min(), r.y_pred_seq_n.min())
+    y_max = max(r.y_true_seq_n.max(), r.y_pred_seq_n.max())
     ax.plot([y_min, y_max], [y_min, y_max], "k--", label="y_pred = y_true")
 
     # タイトル・ラベル・レイアウト調整
@@ -226,7 +250,7 @@ def plot_prediction_vs_ground_truth(
 
 
 def plot_prediction(
-        results: list[PredictionResult],
+        r_lst: list[PredictionResult],
         *,
         x_label: Literal["time", "index"] = "index",
         out_index: int | list[int] | Literal["all"] | None = None,
@@ -235,7 +259,7 @@ def plot_prediction(
     PredictionResultのリストを受け取り、各行に各結果の時系列・散布図を描画します。
 
     Args:
-        results (list[PredictionResult]): プロット対象のPredictionResultインスタンスのリスト。
+        r_lst (list[PredictionResult]): プロット対象のPredictionResultインスタンスのリスト。
         x_label (Literal["time", "index"], optional): x軸に"時間"（"time"）または"インデックス"（"index"）を使用するかを指定します。デフォルトは"index"。
         out_index (int | list[int] | Literal["all"] | None, optional): 各サンプルに同じout_indexを適用します。intの場合はその次元、list[int]の場合は複数次元、"all"の場合は全次元、Noneの場合はn_out=1なら0、そうでなければエラー。
 
@@ -243,11 +267,11 @@ def plot_prediction(
         bool: プロットが正常に完了した場合はTrueを返します。
 
     Raises:
-        AssertionError: resultsがPredictionResultのリストでない場合。
+        AssertionError: r_lstがPredictionResultのリストでない場合。
     """
-    assert isinstance(results, list) and all(
-        isinstance(r, PredictionResult) for r in results), "resultsはPredictionResultのリストである必要があります"
-    n_samples = len(results)
+    assert isinstance(r_lst, list) and all(isinstance(r, PredictionResult) for r in r_lst), \
+        "r_lstはPredictionResultのリストである必要があります"
+    n_samples = len(r_lst)
 
     # サブプロットの作成
     fig, axs = plt.subplots(n_samples, 2, figsize=(16, 4 * n_samples), sharex=False,
@@ -256,11 +280,11 @@ def plot_prediction(
         axs = [axs]
 
     # 各サンプルごとに描画
-    for row, result in enumerate(results):
+    for row, r in enumerate(r_lst):
         # 1列目: 予測時系列
         ax_time = axs[row][0]
         plot_prediction_time_series(
-            result,
+            r,
             x_label=x_label,
             out_index=out_index,
             ax=ax_time,
@@ -271,7 +295,7 @@ def plot_prediction(
         # 2列目: 散布図
         ax_scatter = axs[row][1]
         plot_prediction_vs_ground_truth(
-            result,
+            r,
             out_index=out_index,
             ax=ax_scatter,
         )

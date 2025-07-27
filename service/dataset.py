@@ -9,20 +9,20 @@ from model.dataset import Discrete, Continuous, Dataset
 """
 データセットの整理
 
-時刻t_arr -> 入力（離散：u_arr, 連続：u_t(t)） -> 出力y_arr
+時刻t_seq -> 入力（離散：u_seq, 連続：u_t(t)） -> 出力y_seq
 
 時刻の生成
  - 時刻データのk番目はひとつのデータ要素の区間[t_k, t_(k+1))のt_kを表す
-t_arr = generate_time_series(t_max, t_delta)  # [0, t_max)をt_deltaの間隔で分割
+t_seq = generate_time_series(t_max, t_delta)  # [0, t_max)をt_deltaの間隔で分割
       = generate_time_series(t_max, n)  # [0, t_max)をn個に分割 [0, Δ, 2Δ, 3Δ, ..., t_max - Δ]
 
 time-multiplexing用のデータは
  - FN: 各ステップの初めの入力と出力をその区間全体で引きずる（ステップの始めから終わりまで固定値をとる）
  - NV: 純粋な連続データが必要
 
-ESN <- u_arr, y_arr 離散
-FN <- u_arr, y_arr 離散
-CD <- u_arr, y_arr 離散
+ESN <- u_seq, y_seq 離散
+FN <- u_seq, y_seq 離散
+CD <- u_seq, y_seq 離散
 NV <- t, u_t(t), y_t(t) 連続
 
 任意の離散バージョン -> 連続バージョン の変換は可能
@@ -30,17 +30,17 @@ NV <- t, u_t(t), y_t(t) 連続
 時刻は連続バージョンのときに必要
 
 離散 DelayedSine -> 純粋な連続バージョンが必要
- - u_arr = sin wave, y_arr[k] = u_arr[k - lag]
+ - u_seq = sin wave, y_seq[k] = u_seq[k - lag]
 離散 DelayedRandom
- - u_arr = U(0, 1), y_arr[k] = u_arr[k - lag]
+ - u_seq = U(0, 1), y_seq[k] = u_seq[k - lag]
 離散 DelayedParityCheck
- - u_arr = {0, 1}, y_arr[k] = (sum{i = 1 to w} u_arr[k - i]) mod 2
+ - u_seq = {0, 1}, y_seq[k] = (sum{i = 1 to w} u_seq[k - i]) mod 2
 離散 MackeyGlass -> 純粋な連続バージョンが必要
  - t = ..., u_t(0) = u_0, u_t(t) = 微分方程式により定まる, y_t(t) = u(t + t_step)
- - t_arr[k] = k * t_step, u_arr[k] = u_t(k * t_step), y_arr[k] = u_arr[k + 1]
+ - t_seq[k] = k * t_step, u_seq[k] = u_t(k * t_step), y_seq[k] = u_seq[k + 1]
 離散の連続バージョン
  - t_step = ..., t = [0, 離散の要素数n * t_step) 
- - u_t(t) = u_arr[floor(t / t_step)], y_t(t) = y_arr[floor(t / t_step)]
+ - u_t(t) = u_seq[floor(t / t_step)], y_t(t) = y_seq[floor(t / t_step)]
 """
 
 
@@ -63,20 +63,20 @@ class AbstractDatasetGenerator(ABC):
         )
 
     @property
-    def t_arr(self) -> Discrete:
+    def t_seq(self) -> Discrete:
         return np.arange(0, self._t_max, self._t_step)
 
     def __len__(self) -> int:
-        return len(self.t_arr)
+        return len(self.t_seq)
 
     @property
     @abstractmethod
-    def u_arr(self) -> Discrete:
+    def u_seq(self) -> Discrete:
         raise NotImplementedError()
 
     @property
     @abstractmethod
-    def y_arr(self) -> Discrete:
+    def y_true_seq(self) -> Discrete:
         raise NotImplementedError()
 
     @property
@@ -86,29 +86,29 @@ class AbstractDatasetGenerator(ABC):
 
     @property
     @abstractmethod
-    def y_t(self) -> Continuous:
+    def y_true_t(self) -> Continuous:
         raise NotImplementedError()
 
     def create(self) -> Dataset:
         return Dataset(
             name=self.name,
             parameters=self.parameters,
-            t_arr=self.t_arr,
-            u_arr=self.u_arr,
-            y_arr=self.y_arr,
+            t_seq=self.t_seq,
+            u_seq=self.u_seq,
+            y_true_seq=self.y_true_seq,
             u_t=self.u_t,
-            y_t=self.y_t,
+            y_true_t=self.y_true_t,
         )
 
 
 class AbstractContinuousDatasetGenerator(AbstractDatasetGenerator, ABC):
     @property
-    def u_arr(self) -> Discrete:
-        return self.u_t(self.t_arr)
+    def u_seq(self) -> Discrete:
+        return self.u_t(self.t_seq)
 
     @property
-    def y_arr(self) -> Discrete:
-        return self.y_t(self.t_arr)
+    def y_true_seq(self) -> Discrete:
+        return self.y_true_t(self.t_seq)
 
 
 class AbstractDiscreteDatasetGenerator(AbstractDatasetGenerator, ABC):
@@ -116,15 +116,15 @@ class AbstractDiscreteDatasetGenerator(AbstractDatasetGenerator, ABC):
     def u_t(self) -> Continuous:
         def u_t(t: Discrete) -> Discrete:
             idx = np.floor(np.asarray(t) / self._t_step + 1e-11).astype(int)
-            return self.u_arr[idx]
+            return self.u_seq[idx]
 
         return u_t
 
     @property
-    def y_t(self) -> Continuous:
+    def y_true_t(self) -> Continuous:
         def y_t(t: Discrete) -> Discrete:
             idx = np.floor(np.asarray(t) / self._t_step + 1e-11).astype(int)
-            return self.y_arr[idx]
+            return self.y_true_seq[idx]
 
         return y_t
 
@@ -172,7 +172,7 @@ class DelayedSineDatasetGenerator(AbstractContinuousDatasetGenerator):  # 本質
         return u_t
 
     @property
-    def y_t(self) -> Continuous:
+    def y_true_t(self) -> Continuous:
         def y_t(t: Discrete) -> Discrete:
             return self.__f_t(t - self._discrete_lag * self._t_step)
 
@@ -231,8 +231,8 @@ class NoisyDelayedSineDatasetGenerator(DelayedSineDatasetGenerator):
         return u_t
 
     @property
-    def y_t(self) -> Continuous:  # 生成の度に異なるノイズが加わる
-        super_y_t = super().y_t
+    def y_true_t(self) -> Continuous:  # 生成の度に異なるノイズが加わる
+        super_y_t = super().y_true_t
 
         def y_t(t: Discrete) -> Discrete:
             a = super_y_t(t)
@@ -264,7 +264,7 @@ class DelayedRandomDatasetGenerator(AbstractDiscreteDatasetGenerator):  # 本質
         self._high = high
         self._rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
 
-        self._series = self._rng.uniform(self._low, self._high, len(self.t_arr))
+        self._series = self._rng.uniform(self._low, self._high, len(self.t_seq))
 
     @property
     def name(self) -> str:
@@ -281,13 +281,13 @@ class DelayedRandomDatasetGenerator(AbstractDiscreteDatasetGenerator):  # 本質
         )
 
     @property
-    def u_arr(self) -> Discrete:
+    def u_seq(self) -> Discrete:
         return self._series
 
     @property
-    def y_arr(self) -> Discrete:
-        y_arr = np.zeros_like(self.u_arr)
-        y_arr[self._discrete_lag:] = self.u_arr[:-self._discrete_lag]
+    def y_true_seq(self) -> Discrete:
+        y_arr = np.zeros_like(self.u_seq)
+        y_arr[self._discrete_lag:] = self.u_seq[:-self._discrete_lag]
         return y_arr
 
 
@@ -305,7 +305,7 @@ class ParityCheckDatasetGenerator(AbstractDiscreteDatasetGenerator):  # 本質�
         self._window_size = window_size
         self._rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
 
-        self._series = self._rng.choice([0, 1], size=len(self.t_arr))
+        self._series = self._rng.choice([0, 1], size=len(self.t_seq))
 
     @property
     def name(self) -> str:
@@ -319,14 +319,14 @@ class ParityCheckDatasetGenerator(AbstractDiscreteDatasetGenerator):  # 本質�
         )
 
     @property
-    def u_arr(self) -> Discrete:
+    def u_seq(self) -> Discrete:
         return self._series
 
     @property
-    def y_arr(self) -> Discrete:
-        y_arr = np.zeros_like(self.u_arr)
-        for k in range(self._window_size, len(self.u_arr)):
-            y_arr[k] = np.sum(self.u_arr[k - self._window_size:k]) % 2
+    def y_true_seq(self) -> Discrete:
+        y_arr = np.zeros_like(self.u_seq)
+        for k in range(self._window_size, len(self.u_seq)):
+            y_arr[k] = np.sum(self.u_seq[k - self._window_size:k]) % 2
         return y_arr
 
 
@@ -362,7 +362,7 @@ class NarmaDatasetGenerator(AbstractDiscreteDatasetGenerator):
         self._low = low
         self._high = high
         self._rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
-        self._series = self._rng.uniform(self._low, self._high, len(self.t_arr))
+        self._series = self._rng.uniform(self._low, self._high, len(self.t_seq))
 
     @property
     def name(self) -> str:
@@ -382,18 +382,18 @@ class NarmaDatasetGenerator(AbstractDiscreteDatasetGenerator):
         )
 
     @property
-    def u_arr(self) -> Discrete:
+    def u_seq(self) -> Discrete:
         return self._series
 
     @property
-    def y_arr(self) -> Discrete:
-        y_arr = np.zeros_like(self.u_arr)
+    def y_true_seq(self) -> Discrete:
+        y_arr = np.zeros_like(self.u_seq)
         n = self._n
         a = self._a
         b = self._b
         c = self._c
         d = self._d
-        u = self.u_arr
+        u = self.u_seq
         for k in range(n - 1, len(u) - 1):
             y_arr[k + 1] = (
                     a * y_arr[k]
@@ -405,7 +405,7 @@ class NarmaDatasetGenerator(AbstractDiscreteDatasetGenerator):
 
 
 def train_test_split(
-        u_arr, y_arr, t_arr=None,
+        u_seq, y_true_seq, t_seq=None,
         /,
         test_ratio=0.3,
         n_washout: int | None = None,
@@ -423,9 +423,9 @@ def train_test_split(
     - 残りをtest_ratioの比率でtrain/testに分割
 
     Args:
-        u_arr (np.ndarray): 入力データ配列
-        y_arr (np.ndarray): 出力データ配列
-        t_arr (np.ndarray): 時刻データ配列（省略可）
+        u_seq (np.ndarray): 入力データ配列
+        y_true_seq (np.ndarray): 出力データ配列
+        t_seq (np.ndarray): 時刻データ配列（省略可）
         test_ratio (float): train/test分割比率 (0.0-1.0, testの割合)
         n_washout (int|None): train/test両方のwashout数
         n_train_washout (int|None): 先頭のwashout数
@@ -435,7 +435,7 @@ def train_test_split(
         tuple: (u_train, u_test), (y_train, y_test), (t_train, t_test)
         ただし時刻データ配列未指定なら(u_train, u_test), (y_train, y_test)
     """
-    if len(u_arr) != len(y_arr):
+    if len(u_seq) != len(y_true_seq):
         raise ValueError("u_arr and y_arr must have the same length")
 
     # washout指定の解釈
@@ -451,7 +451,7 @@ def train_test_split(
         if n_test_washout is None:
             n_test_washout = 0
 
-    n_total = len(u_arr)
+    n_total = len(u_seq)
     n_remain = n_total - n_train_washout - n_test_washout
     n_test = int(n_remain * test_ratio)
     n_train = n_remain - n_test
@@ -464,13 +464,13 @@ def train_test_split(
     test_start = train_end + n_test_washout
     test_end = test_start + n_test
 
-    u_train = u_arr[train_start:train_end]
-    y_train = y_arr[train_start:train_end]
-    u_test = u_arr[test_start:test_end]
-    y_test = y_arr[test_start:test_end]
-    if t_arr is not None:
-        t_train = t_arr[train_start:train_end]
-        t_test = t_arr[test_start:test_end]
+    u_train = u_seq[train_start:train_end]
+    y_train = y_true_seq[train_start:train_end]
+    u_test = u_seq[test_start:test_end]
+    y_test = y_true_seq[test_start:test_end]
+    if t_seq is not None:
+        t_train = t_seq[train_start:train_end]
+        t_test = t_seq[test_start:test_end]
         return (u_train, u_test), (y_train, y_test), (t_train, t_test)
     return (u_train, u_test), (y_train, y_test)
 
@@ -530,8 +530,8 @@ def _preview_dataset():
         plt.figure(figsize=(10, 5))
         # discrete
         plt.subplot(2, 1, 1)
-        plt.plot(ds.t_arr, ds.u_arr, label=f"{name} (u)", marker="o")
-        plt.plot(ds.t_arr, ds.y_arr, label=f"{name} (y)", marker="o")
+        plt.plot(ds.t_seq, ds.u_seq, label=f"{name} (u)", marker="o")
+        plt.plot(ds.t_seq, ds.y_true_seq, label=f"{name} (y)", marker="o")
         plt.xlabel("t")
         plt.ylabel("u, y")
         plt.grid()
@@ -540,7 +540,7 @@ def _preview_dataset():
         # continuous
         plt.subplot(2, 1, 2)
         plt.plot(t_arr_continuous, ds.u_t(t_arr_continuous), label=f"{name} (u_continuous)")
-        plt.plot(t_arr_continuous, ds.y_t(t_arr_continuous), label=f"{name} (y_continuous)")
+        plt.plot(t_arr_continuous, ds.y_true_t(t_arr_continuous), label=f"{name} (y_continuous)")
         plt.xlabel("t")
         plt.ylabel("u, y")
         plt.grid()
