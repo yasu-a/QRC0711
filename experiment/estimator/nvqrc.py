@@ -12,8 +12,8 @@ from experiment.estimator.dto import StateComputationResult
 from model.axis import Axis
 from model.dataset import Continuous, Discrete, Dataset
 from model.param import NVQRCParam
-from model.physical_system import NVReservoirPhysicsSystem, AbstractPhysicalSystem, \
-    NVReservoirObservable, NVReservoirCollapseOperator
+from model.physical_system import NVReservoirPhysicsSystem, AbstractPhysicalObject, \
+    EachSingleQubitSingleAxisObservable, NVReservoirCollapseOperator
 from model.prediction_result import PredictionResult
 from model.state_array import QRCStateArray, AbstractState2DArray
 from service.compute_time_evol import get_compute_time_evol_state_series_service
@@ -35,13 +35,13 @@ class NVQRCEstimator(AbstractEstimator):
         )
 
     @classmethod
-    def _create_solver(cls, *, param: NVQRCParam, system: AbstractPhysicalSystem):
+    def _create_solver(cls, *, param: NVQRCParam, system: AbstractPhysicalObject):
         return create_time_evol_solver(
             system=system,
             observable=reduce(
                 lambda x, y: x + y,
                 [
-                    NVReservoirObservable(n_qubit=param.n_qubits, axis=axis)
+                    EachSingleQubitSingleAxisObservable(n_qubit=param.n_qubits, axis=axis)
                     for is_enabled, axis in
                     [(param.obs_x, Axis.X), (param.obs_y, Axis.Y), (param.obs_z, Axis.Z)]
                     if is_enabled

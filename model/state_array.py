@@ -100,8 +100,4 @@ class QRCStateArray(AbstractState2DArray):  # immutable
         return np.array(self._data, dtype=dtype, copy=copy)
 
     def __getitem__(self, key):
-        result = self._data[key]
-        if isinstance(result, np.ndarray):
-            return result.copy()  # immutableを保証するためにコピー
-        else:
-            return result  # スカラー値はそのまま
+        return self._data[key]

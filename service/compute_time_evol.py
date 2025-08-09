@@ -34,6 +34,22 @@ class AbstractComputeTimeEvolStateSeriesService(ABC):
         Returns:
             tuple[np.ndarray, QRCStateArray]: Valid time mask array and QRC state series
         """
+
+        """   
+        ====================================
+         STATE SAMPLING EXAMPLE (n_mpx = 5)
+        ====================================
+        
+           >--< τ
+           |  |       
+           |  #0 #1 #2 #3 #4
+           +--+--+--+--+--+-- ... --> t
+           |              |
+           T
+           
+           X(T) = [ x'(#0), x'(#1), x'(#2), x'(#3), x'(#4) ]
+                = [ x'(T + (1/5)τ), x'(T + (2/5)τ), x'(T + (3/5)τ), x'(T + (4/5)τ), x'(T + τ) ]
+        """
         raise NotImplementedError()
 
 
@@ -72,11 +88,10 @@ class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolSta
         for i in it:
             # ステップの開始時刻から終了時刻まで時間発展させて、各時刻における結果を得る
             t_begin, t_end = t_arr[i], t_arr[i + 1]
-            t_div = np.linspace(t_begin, t_end, n_mpx + 1)[:-1]
+            t_div = np.linspace(t_begin, t_end, n_mpx + 1)
             result = solver.forward(u_t, t_div)
-
             # 各観測量の期待値をまとめて配列化（shape: (n_mpx, n_expect)）
-            states = np.stack([result.expect(j) for j in range(result.n_expect)], axis=1)
+            states = np.stack([result.expect(j)[1:] for j in range(result.n_expect)], axis=1)
             steps.append(QRCStateTimeStep(states=states))
 
         # 出力時刻配列とQRC状態列を返す
@@ -138,7 +153,7 @@ class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStat
 
         # 出力時刻配列とQRC状態列を返す
         valid_time_mask = np.zeros(len(t_arr), dtype=bool)
-        valid_time_mask[:len(steps)] = True
+        valid_time_mask[:-1] = True
         return valid_time_mask, QRCStateArray(steps=steps)
 
 

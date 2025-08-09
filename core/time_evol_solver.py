@@ -6,8 +6,8 @@ import qutip
 from numpy.typing import ArrayLike
 
 from core.app_logging import create_logger
-from model.physical_system import AbstractPhysicalSystem, AbstractObservable, \
-    AbstractCollapseOperator
+from model.physical_system import AbstractObservable, AbstractCollapseOperator, \
+    AbstractResponsivePhysicalSystem
 
 
 class ForwardResult:
@@ -35,9 +35,9 @@ class AbstractTimeEvolutionSolver(ABC):
     def __init__(
             self,
             *,
-            system: AbstractPhysicalSystem,
+            system: AbstractResponsivePhysicalSystem,
             observable: AbstractObservable,
-            collapse_operator: AbstractCollapseOperator,
+            collapse_operator: AbstractCollapseOperator | None = None,
             init_psi: qutip.Qobj,
     ):
         self._system = system
@@ -77,9 +77,9 @@ class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
     def __init__(
             self,
             *,
-            system: AbstractPhysicalSystem,
+            system: AbstractResponsivePhysicalSystem,
             observable: AbstractObservable,
-            collapse_operator: AbstractCollapseOperator,
+            collapse_operator: AbstractCollapseOperator | None = None,
             init_psi: qutip.Qobj,
     ):
         super().__init__(
@@ -135,17 +135,21 @@ class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
         # Set options
         options: dict[str, Any] = {
             "store_final_state": True,
-            "progress_bar": "tqdm",
         }
         if pbar_title is not None:
+            options["progress_bar"] = "tqdm"
             options["progress_kwargs"] = {"desc": pbar_title}
 
         # Solve quantum master equation
+        if self._collapse_operator is None:
+            c_ops = None
+        else:
+            c_ops = self._collapse_operator.create_hamiltonian()
         result = qutip.mesolve(
-            H=self._system.create_hamiltonian(td_coeff=u_t),
+            H=self._system.create_hamiltonian(u_t=u_t),
             rho0=self._rho,
             tlist=t_seq,
-            c_ops=self._collapse_operator.create_hamiltonian(),
+            c_ops=c_ops,
             e_ops=self._observable.create_hamiltonian(),
             options=options,
         )
@@ -166,9 +170,9 @@ _SOLVER_MAPPING: dict[str, type[AbstractTimeEvolutionSolver]] = {
 
 def create_time_evol_solver(
         *,
-        system: AbstractPhysicalSystem,
+        system: AbstractResponsivePhysicalSystem,
         observable: AbstractObservable,
-        collapse_operator: AbstractCollapseOperator,
+        collapse_operator: AbstractCollapseOperator | None = None,
         init_psi: qutip.Qobj,
         backend: str = "qutip-mesolve",
 ) -> AbstractTimeEvolutionSolver:
