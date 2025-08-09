@@ -157,7 +157,6 @@ class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStat
         return valid_time_mask, QRCStateArray(steps=steps)
 
 
-# FIXME: DividedForwardを使うかSingleForwardを使うかによって結果が異なる
 def get_compute_time_evol_state_series_service() -> AbstractComputeTimeEvolStateSeriesService:
     # return ComputeTimeEvolStateSeriesDividedForwardService()
     return ComputeTimeEvolStateSeriesSingleForwardService()

@@ -1,15 +1,15 @@
 from functools import cache
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
-import qutip
+from qutip.typing import ElementType
 
 from core.fullstate import fullstate
 from core.seed_or_rng import check_seed_or_rng_and_get_rng
 from core.time_evol_solver import AbstractTimeEvolutionSolver, create_time_evol_solver
 from model.axis import Axis
 from model.physical_system import EachSingleQubitSingleAxisObservable, FullInteraction, \
-    MagneticInteraction, AbstractResponsivePhysicalSystem
+    ResponsiveMagneticInteraction, AbstractResponsivePhysicalSystem
 from service.compute_time_evol import ComputeTimeEvolStateSeriesDividedForwardService, \
     ComputeTimeEvolStateSeriesSingleForwardService
 from service.dataset import DelayedSineDatasetGenerator
@@ -30,7 +30,7 @@ class TestPhysicalSystem(AbstractResponsivePhysicalSystem):
     def __init__(self, seed: int):
         self._rng = check_seed_or_rng_and_get_rng(seed=seed)
 
-        self._magnetic_interaction = MagneticInteraction.create_instance(
+        self._magnetic_interaction = ResponsiveMagneticInteraction.create_instance(
             n_qubit=_N_QUBIT,
             mean=_H_MEAN,
             std=_H_STD,
@@ -46,7 +46,7 @@ class TestPhysicalSystem(AbstractResponsivePhysicalSystem):
         )
 
     @cache
-    def create_hamiltonian(self, u_t: Callable[[float], float]) -> list[qutip.Qobj]:
+    def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
         return self._magnetic_interaction.create_hamiltonian() \
             + self._full_interaction.create_hamiltonian()
 

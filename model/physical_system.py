@@ -1,10 +1,11 @@
 import inspect
 from abc import ABC, abstractmethod
 from functools import cache
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 import qutip
+from qutip.typing import ElementType
 
 from core.fullgate import fullgate
 from core.seed_or_rng import check_seed_or_rng_and_get_rng
@@ -27,7 +28,7 @@ class AbstractPhysicalObject(ABC):
 
         Args:
             other: 結合する物理システム
-        
+
         Returns:
             ChainedPhysicalSystem: 結合された物理システム
         """
@@ -44,7 +45,7 @@ class AbstractIsolatedPhysicalSystem(AbstractPhysicalObject, ABC):
     _kind = "isolated-physical-system"
 
     @abstractmethod
-    def create_hamiltonian(self) -> list[qutip.Qobj]:
+    def create_hamiltonian(self) -> Sequence[ElementType]:
         """
         システムのハミルトニアンを生成する。
 
@@ -62,7 +63,7 @@ class AbstractResponsivePhysicalSystem(AbstractPhysicalObject, ABC):
     _kind = "responsive-physical-system"
 
     @abstractmethod
-    def create_hamiltonian(self, u_t: Callable[[float], float] = None) -> list[qutip.Qobj]:
+    def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
         """
         システムのハミルトニアンを生成する。
 
@@ -79,7 +80,7 @@ class AbstractObservable(AbstractPhysicalObject, ABC):
     _kind = "observable"
 
     @abstractmethod
-    def create_hamiltonian(self) -> list[qutip.Qobj]:
+    def create_hamiltonian(self) -> Sequence[ElementType]:
         """
         システムのハミルトニアンを生成する。
 
@@ -96,7 +97,7 @@ class AbstractCollapseOperator(AbstractPhysicalObject, ABC):
     _kind = "collapse-operator"
 
     @abstractmethod
-    def create_hamiltonian(self) -> list[qutip.Qobj]:
+    def create_hamiltonian(self) -> Sequence[ElementType]:
         """
         システムのハミルトニアンを生成する。
 
@@ -136,7 +137,8 @@ class ChainedPhysicalSystem(AbstractPhysicalObject):
                         raise TypeError(
                             f"The elements of the chain must be AbstractPhysicalObject, but got {type(obj)}")
             if fail:
-                raise RuntimeError("Chained physical system must have the same kind")
+                raise RuntimeError(
+                    "Chained physical system must have the same kind")
         self._kind = chain[0]._kind
 
     @cache
@@ -157,7 +159,7 @@ class ChainedPhysicalSystem(AbstractPhysicalObject):
             kwargs_names |= self._get_kwarg_names(i)
         return frozenset(kwargs_names)
 
-    def create_hamiltonian(self, **kwargs) -> list[qutip.Qobj]:
+    def create_hamiltonian(self, **kwargs) -> Sequence[ElementType]:
         """
         結合されたシステムのハミルトニアンを生成する。
 
@@ -173,7 +175,8 @@ class ChainedPhysicalSystem(AbstractPhysicalObject):
 
         ham = []
         for i, s in enumerate(self._chain):
-            current_kwargs = {k: v for k, v in kwargs.items() if k in self._get_kwarg_names(i)}
+            current_kwargs = {
+                k: v for k, v in kwargs.items() if k in self._get_kwarg_names(i)}
             # FIXME: protocolを上手く使ってtargetがcreate_hamiltonianを持っていることを記述し、type: ignoreを外す
             ham.extend(s.create_hamiltonian(**current_kwargs))  # type: ignore
         return ham
@@ -325,17 +328,7 @@ class FullInteraction(AbstractPhysicalObject):
         ]
 
 
-class MagneticInteraction(AbstractPhysicalObject):
-    """
-    磁場による相互作用。
-
-    各量子ビットに対する磁場の効果を表現し、
-    hi * σ_i * u(t) の形の項を生成する。
-    時間依存性を持つことができる。
-    """
-
-    # hi * fullgate([[axis, i]] foreach i) * u_t(t)
-
+class MagneticInteractionBase:
     def __init__(self, coeff: np.ndarray, *, axis: Axis):
         """
         磁場相互作用を初期化する。
@@ -367,7 +360,7 @@ class MagneticInteraction(AbstractPhysicalObject):
             rng (np.random.RandomState | None, optional): 乱数生成器
 
         Returns:
-            MagneticInteraction: 生成されたインスタンス
+            ResponsiveMagneticInteraction: 生成されたインスタンス
         """
         assert n_qubit >= 1
         rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
@@ -382,12 +375,24 @@ class MagneticInteraction(AbstractPhysicalObject):
         """量子ビット数を返す。"""
         return len(self._coeff)
 
-    def create_hamiltonian(self, *, td_coeff: Callable[[float], float] = None):
+
+class ResponsiveMagneticInteraction(MagneticInteractionBase, AbstractResponsivePhysicalSystem):
+    """
+    磁場による相互作用。
+
+    各量子ビットに対する磁場の効果を表現し、
+    hi * σ_i * u(t) の形の項を生成する。
+    時間依存性を持つことができる。
+    """
+
+    # hi * u(t) * fullgate([[axis, i]] foreach i)
+
+    def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
         """
         磁場相互作用のハミルトニアンを生成する。
 
         Args:
-            td_coeff (Callable[[float], float], optional):
+            u_t (Callable[[float], float], optional):
                 時間依存性を表す関数。Noneの場合は時間非依存。
 
         Returns:
@@ -401,16 +406,40 @@ class MagneticInteraction(AbstractPhysicalObject):
             for i in range(self._n_qubit)
         ]
 
-        # If time-dependent coefficient provided, wrap Hamiltonian in tuples with td_coeff
-        if td_coeff is not None:
-            ham_lst = [
-                [ham, td_coeff]
-                for ham in ham_lst
-            ]
+        # If time-dependent coefficient provided, wrap Hamiltonian in tuples with u_t
+        ham_lst = [
+            [ham, u_t]
+            for ham in ham_lst
+        ]
         return ham_lst
 
 
-class NVReservoirPhysicsSystem(AbstractPhysicalObject):
+class IsolatedMagneticInteraction(MagneticInteractionBase, AbstractIsolatedPhysicalSystem):
+    """
+    孤立した磁場相互作用。
+
+    各量子ビットに対する磁場の効果を表現し、
+    hi * σ_i の形の項を生成する。
+    """
+
+    def create_hamiltonian(self) -> Sequence[ElementType]:
+        """
+        磁場相互作用のハミルトニアンを生成する。
+
+        Returns:
+            list[qutip.Qobj] | list[list]:
+                時間非依存の場合は演算子のリスト、
+                時間依存の場合は [演算子, 時間関数] のペアのリスト
+        """
+        # Create a list of Hamiltonian for each qubit, scaled by coefficients
+        ham_lst = [
+            self._coeff[i] * fullgate(self._n_qubit, f"{self._axis.name}{i}")
+            for i in range(self._n_qubit)
+        ]
+        return ham_lst
+
+
+class NVReservoirPhysicsSystem(AbstractResponsivePhysicalSystem):
     """
     NVセンターベースの量子リザバー物理システム。
 
@@ -457,7 +486,7 @@ class NVReservoirPhysicsSystem(AbstractPhysicalObject):
             axis=j_axis,
             rng=rng,
         )
-        self._magnetic_interaction = MagneticInteraction.create_instance(
+        self._magnetic_interaction = IsolatedMagneticInteraction.create_instance(
             n_qubit=n_qubit,
             # time_dependent_magnetic_interactionと合わせて2n個の作用
             mean=h_mean / (n_qubit * 2),
@@ -465,7 +494,7 @@ class NVReservoirPhysicsSystem(AbstractPhysicalObject):
             axis=h_axis,
             rng=rng,
         )
-        self._time_dependent_magnetic_interaction = MagneticInteraction.create_instance(
+        self._time_dependent_magnetic_interaction = ResponsiveMagneticInteraction.create_instance(
             n_qubit=n_qubit,
             mean=h_mean / (n_qubit * 2),  # magnetic_interactionと合わせて2n個の作用
             std=h_std,
@@ -473,12 +502,12 @@ class NVReservoirPhysicsSystem(AbstractPhysicalObject):
             rng=rng,
         )
 
-    def create_hamiltonian(self, *, td_coeff):
+    def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
         """
         NVリザバーシステムの完全なハミルトニアンを生成する。
 
         Args:
-            td_coeff: 時間依存項の係数関数
+            u_t: 時間依存項の係数関数
 
         Returns:
             list[qutip.Qobj]: システム全体のハミルトニアン項のリスト
@@ -486,11 +515,11 @@ class NVReservoirPhysicsSystem(AbstractPhysicalObject):
         ham_1 = self._full_interaction.create_hamiltonian()
         ham_2 = self._magnetic_interaction.create_hamiltonian()
         ham_3 = self._time_dependent_magnetic_interaction.create_hamiltonian(
-            td_coeff=td_coeff)
+            u_t=u_t)
         return ham_1 + ham_2 + ham_3
 
 
-class FNQRCPhysicsSystem(AbstractPhysicalObject):
+class FNQRCPhysicsSystem(AbstractResponsivePhysicalSystem):
     """
     FN-QRC (Fully Networked Quantum Reservoir Computing) 物理システム。
 
@@ -545,7 +574,7 @@ class FNQRCPhysicsSystem(AbstractPhysicalObject):
         # 各量子ビットの磁場強度を生成（virtual nodeには依存しない）
         self._theta_values = rng.normal(theta_mean, theta_std, size=n_qubit)
 
-    def create_hamiltonian(self, *, u_input: float = 0.0):
+    def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
         """
         FN-QRCシステムのハミルトニアンを生成する。
 
@@ -553,7 +582,7 @@ class FNQRCPhysicsSystem(AbstractPhysicalObject):
         物理系は固定され、virtual nodeには依存しない。
 
         Args:
-            u_input (float): 入力信号の値
+            u_t (Callable[[float], float], optional): 時間依存の入力関数
 
         Returns:
             list[qutip.Qobj]: システムのハミルトニアン項のリスト
@@ -568,14 +597,12 @@ class FNQRCPhysicsSystem(AbstractPhysicalObject):
                     h_term = j_ij * fullgate(self._n_qubit, f"X{i},X{j}")
                     hamiltonian_terms.append(h_term)
 
-        # 磁場項（h_k u(t) σ_k^z）論文式16でのhZi項
-        if u_input != 0:
-            for k in range(self._n_qubit):
-                # 各量子ビットの磁場強度
-                h_k = self._theta_values[k]
-                if h_k != 0:
-                    h_term = h_k * u_input * fullgate(self._n_qubit, f"Z{k}")
-                    hamiltonian_terms.append(h_term)
+        # 時間依存の磁場項として [演算子, 時間関数] のペアを作成
+        for k in range(self._n_qubit):
+            h_k = self._theta_values[k]
+            if h_k != 0:
+                h_operator = h_k * fullgate(self._n_qubit, f"Z{k}")
+                hamiltonian_terms.append([h_operator, u_t])
 
         return hamiltonian_terms
 

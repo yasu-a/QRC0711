@@ -7,31 +7,37 @@ from core.time_evol_solver import AbstractTimeEvolutionSolver, create_time_evol_
 from experiment.estimator.base import AbstractReservoirEstimator
 from model.axis import Axis
 from model.dataset import Continuous, Discrete
-from model.param import NVQRCParam
-from model.physical_system import NVReservoirPhysicsSystem, EachSingleQubitSingleAxisObservable, \
-    NVReservoirCollapseOperator, \
+from model.param import FNQRCParam
+from model.physical_system import FNQRCPhysicsSystem, EachSingleQubitSingleAxisObservable, \
     AbstractResponsivePhysicalSystem
 from model.state_array import QRCStateArray, AbstractState2DArray
 
 
-class NVQRCEstimator(AbstractReservoirEstimator):
+class FNQRCEstimator(AbstractReservoirEstimator):
+    """
+    FN-QRC (Fully Networked Quantum Reservoir Computing) Estimator.
+    
+    論文 "Harnessing Disordered-Ensemble Quantum Dynamics for Machine Learning"
+    で提案されたモデルの実装。
+    """
+
     @classmethod
-    def _create_system(cls, param: NVQRCParam, seed: int) -> NVReservoirPhysicsSystem:
-        return NVReservoirPhysicsSystem(
+    def _create_system(cls, param: FNQRCParam, seed: int) -> FNQRCPhysicsSystem:
+        """FN-QRC物理システムを作成する。"""
+        return FNQRCPhysicsSystem(
             n_qubit=param.n_qubits,
             j_mean=param.j_mean,
             j_std=param.j_std,
-            j_axis=Axis.X,
-            h_mean=param.h_mean,
-            h_std=param.h_std,
-            h_axis=Axis.Z,
-            h_td_axis=Axis.X,
+            theta_mean=param.theta_mean,
+            theta_std=param.theta_std,
+            rotation_axis=param.rotation_axis,
             seed=seed,
         )
 
     @classmethod
-    def _create_solver(cls, *, param: NVQRCParam,
+    def _create_solver(cls, *, param: FNQRCParam,
                        system: AbstractResponsivePhysicalSystem) -> AbstractTimeEvolutionSolver:
+        """FN-QRC用のtime evolution solverを作成する。"""
         return create_time_evol_solver(
             system=system,
             observable=reduce(
@@ -43,22 +49,30 @@ class NVQRCEstimator(AbstractReservoirEstimator):
                     if is_enabled
                 ],
             ),
-            collapse_operator=NVReservoirCollapseOperator(n_qubit=param.n_qubits,
-                                                          gamma_z=param.gamma_z),
+            collapse_operator=None,  # FN-QRCでは崩壊演算子は使用しない
             init_psi=fullstate(",".join(["z+"] * param.n_qubits)),
         )
 
     def __init__(
             self,
             *,
-            param: NVQRCParam,
+            param: FNQRCParam,
             seed: int,
             n_washout: int,
             n_cpu: int,
     ) -> None:
+        """
+        FNQRCEstimatorを初期化する。
+
+        Args:
+            param (FNQRCParam): FN-QRCのパラメータ
+            seed (int): 乱数シード
+            n_washout (int): ウォッシュアウト期間
+            n_cpu (int): 並列処理用CPU数
+        """
         system = self._create_system(param=param, seed=seed)
         solver = self._create_solver(param=param, system=system)
-        
+
         self._param = param
 
         super().__init__(
@@ -78,7 +92,7 @@ class NVQRCEstimator(AbstractReservoirEstimator):
             tqdm_title: str | None = None
     ) -> tuple[np.ndarray, QRCStateArray]:
         """
-        NVQRC状態系列と出力時刻配列を計算する。
+        FNQRC状態系列と出力時刻配列を計算する。
 
         Args:
             u_t (np.ndarray): 入力信号配列
@@ -87,7 +101,7 @@ class NVQRCEstimator(AbstractReservoirEstimator):
             tqdm_title (str | None, optional): 進捗バーのタイトル。デフォルトはNone。
 
         Returns:
-            tuple[np.ndarray, QRCStateArray]: 出力時刻配列とNVQRC状態系列。
+            tuple[np.ndarray, QRCStateArray]: 出力時刻配列とFNQRC状態系列。
         """
         return self._time_evol_series_computer.execute(
             solver=self._solver,
@@ -99,7 +113,7 @@ class NVQRCEstimator(AbstractReservoirEstimator):
         )
 
     def _check_state_count(self, states: AbstractState2DArray) -> None:
-        """NVQRC状態数の妥当性をチェックする。"""
+        """FNQRC状態数の妥当性をチェックする。"""
         observable_count = sum([
             int(self._param.obs_x),
             int(self._param.obs_y),
@@ -111,5 +125,3 @@ class NVQRCEstimator(AbstractReservoirEstimator):
             f"(n_mpx={self._param.n_mpx} * observables={observable_count} "
             f"* n_qubits={self._param.n_qubits}), but got {states.n_state} states"
         )
-
-    # TODO: _get_time_evol_statesのみをサービスとして切り出してテストを作り、一致を確認 非stiffなデータを使用しているから？
