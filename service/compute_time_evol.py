@@ -10,7 +10,7 @@ from model.state_array import QRCStateTimeStep, QRCStateArray
 
 class AbstractComputeTimeEvolStateSeriesService(ABC):
     @abstractmethod
-    def execute(
+    def _execute_impl(
             self,
             *,
             solver: AbstractTimeEvolutionSolver,
@@ -19,6 +19,7 @@ class AbstractComputeTimeEvolStateSeriesService(ABC):
             t_arr: Discrete,
             reset_state: bool = True,
             tqdm_title: str | None = None,
+            full_span=False,
     ) -> tuple[np.ndarray, QRCStateArray]:
         """
         Compute QRC state series and output time array.
@@ -52,13 +53,6 @@ class AbstractComputeTimeEvolStateSeriesService(ABC):
         """
         raise NotImplementedError()
 
-
-class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolStateSeriesService):
-    def __init__(
-            self,
-    ):
-        pass
-
     def execute(
             self,
             *,
@@ -68,6 +62,47 @@ class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolSta
             t_arr: Discrete,
             reset_state: bool = True,
             tqdm_title: str | None = None,
+            full_span=False,
+            # ^ full_span: すべての区間の結果を計算する mesolveがt_arrの外側も参照するので、u_t(t)がt_arrの区間よりも十分長く定義されている場合にのみ可能
+    ) -> tuple[np.ndarray, QRCStateArray]:
+        valid_time_mask, state_series = self._execute_impl(
+            solver=solver,
+            n_mpx=n_mpx,
+            u_t=u_t,
+            t_arr=t_arr,
+            reset_state=reset_state,
+            tqdm_title=tqdm_title,
+            full_span=full_span,
+        )
+
+        # マスクが単連結かどうかチェック
+        assert valid_time_mask.ndim == 1, valid_time_mask.shape
+        mask_index = np.where(valid_time_mask)[0]
+        start, end = mask_index.min(), mask_index.max() + 1
+        assert np.all(valid_time_mask[start:end]), valid_time_mask
+
+        # マスクされた要素数と状態系列の長さが一致するかどうかチェック
+        assert len(state_series) == end - start, \
+            f"Actual: {len(state_series)}, expected: {end - start})"
+
+        # full_spanかどうかチェック
+        if full_span:
+            assert np.all(valid_time_mask[:-1]), valid_time_mask
+
+        return valid_time_mask, state_series
+
+
+class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolStateSeriesService):
+    def _execute_impl(
+            self,
+            *,
+            solver: AbstractTimeEvolutionSolver,
+            n_mpx: int,
+            u_t: Continuous,
+            t_arr: Discrete,
+            reset_state: bool = True,
+            tqdm_title: str | None = None,
+            full_span=False,
     ) -> tuple[np.ndarray, QRCStateArray]:
         # QRC状態と出力時刻配列の初期化
         steps: list[QRCStateTimeStep] = []
@@ -77,7 +112,10 @@ class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolSta
             solver.reset_state()
 
         valid_time_mask = np.zeros(len(t_arr), dtype=bool)
-        valid_time_mask[:-2] = True  # mesolveが後方の時刻を参照するため少し前で止める
+        if full_span:
+            valid_time_mask[:-1] = True
+        else:
+            valid_time_mask[:-2] = True  # mesolveが後方の時刻を参照するため少し前で止める
 
         # 進捗バーの設定（必要な場合）
         it = range(np.count_nonzero(valid_time_mask))
@@ -99,12 +137,7 @@ class ComputeTimeEvolStateSeriesDividedForwardService(AbstractComputeTimeEvolSta
 
 
 class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStateSeriesService):
-    def __init__(
-            self,
-    ):
-        pass
-
-    def execute(
+    def _execute_impl(
             self,
             *,
             solver: AbstractTimeEvolutionSolver,
@@ -113,7 +146,11 @@ class ComputeTimeEvolStateSeriesSingleForwardService(AbstractComputeTimeEvolStat
             t_arr: Discrete,
             reset_state: bool = True,
             tqdm_title: str | None = None,
+            full_span=False,
     ) -> tuple[np.ndarray, QRCStateArray]:
+        _ = full_span  # もともとfull_spanなので使わない
+        del full_span
+
         # NOTE
         # ====
         #

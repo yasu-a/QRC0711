@@ -8,7 +8,7 @@ from experiment.estimator.base import AbstractReservoirEstimator
 from model.axis import Axis
 from model.dataset import Continuous, Discrete
 from model.param import NVQRCParam
-from model.physical_system import NVReservoirPhysicsSystem, EachSingleQubitSingleAxisObservable, \
+from model.physical_system import NVPhysicalSystem, EachSingleQubitSingleAxisObservable, \
     NVReservoirCollapseOperator, \
     AbstractResponsivePhysicalSystem
 from model.state_array import QRCStateArray, AbstractState2DArray
@@ -16,8 +16,8 @@ from model.state_array import QRCStateArray, AbstractState2DArray
 
 class NVQRCEstimator(AbstractReservoirEstimator):
     @classmethod
-    def _create_system(cls, param: NVQRCParam, seed: int) -> NVReservoirPhysicsSystem:
-        return NVReservoirPhysicsSystem(
+    def _create_system(cls, param: NVQRCParam, seed: int) -> NVPhysicalSystem:
+        return NVPhysicalSystem(
             n_qubit=param.n_qubits,
             j_mean=param.j_mean,
             j_std=param.j_std,

@@ -17,7 +17,7 @@ class PredictionExperimentSuite(AbstractExperimentSuite):
             generator_fn: Callable[[np.random.RandomState], AbstractDatasetGenerator],
             n_train_samples: int,
             n_test_samples: int,
-            rng: np.random.RandomState,
+            rng: np.random.RandomState, 
             model_class: type[AbstractEstimator],
             model_kwargs: dict,
             show_progress: bool = False,

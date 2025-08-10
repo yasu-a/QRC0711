@@ -73,7 +73,8 @@ class QRCStateArray(AbstractState2DArray):  # immutable
             steps: list[QRCStateTimeStep],
     ):
         assert steps, "steps cannot be empty"
-        assert all(step.n_state == steps[0].n_state for step in steps[1:])
+        assert all(step.n_state == steps[0].n_state for step in steps[1:]), [step.n_state for step
+                                                                             in steps]
 
         # stepsを配列に変換してからstepsを破棄
         self._data = np.array([step.state_vector for step in steps])

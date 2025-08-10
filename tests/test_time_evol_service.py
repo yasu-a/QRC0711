@@ -47,8 +47,7 @@ class TestPhysicalSystem(AbstractResponsivePhysicalSystem):
 
     @cache
     def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
-        return self._magnetic_interaction.create_hamiltonian() \
-            + self._full_interaction.create_hamiltonian()
+        return (self._magnetic_interaction + self._full_interaction).create_hamiltonian(u_t=u_t)
 
 
 def _create_solver() -> AbstractTimeEvolutionSolver:

@@ -1,6 +1,6 @@
 import inspect
 from abc import ABC, abstractmethod
-from functools import cache
+from functools import cache, reduce
 from typing import Callable, Sequence
 
 import numpy as np
@@ -42,7 +42,7 @@ class AbstractIsolatedPhysicalSystem(AbstractPhysicalObject, ABC):
     孤立した物理システムの抽象基底クラス。
     """
 
-    _kind = "isolated-physical-system"
+    _kind = "physical-system"
 
     @abstractmethod
     def create_hamiltonian(self) -> Sequence[ElementType]:
@@ -60,7 +60,7 @@ class AbstractResponsivePhysicalSystem(AbstractPhysicalObject, ABC):
     ハミルトニアン生成時に入力を受け取る物理システムの抽象基底クラス。
     """
 
-    _kind = "responsive-physical-system"
+    _kind = "physical-system"
 
     @abstractmethod
     def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
@@ -137,8 +137,9 @@ class ChainedPhysicalSystem(AbstractPhysicalObject):
                         raise TypeError(
                             f"The elements of the chain must be AbstractPhysicalObject, but got {type(obj)}")
             if fail:
-                raise RuntimeError(
-                    "Chained physical system must have the same kind")
+                raise ValueError(
+                    f"Chained physical system must have the same kind, but get {set(c._kind for c in chain)}"
+                )
         self._kind = chain[0]._kind
 
     @cache
@@ -148,7 +149,7 @@ class ChainedPhysicalSystem(AbstractPhysicalObject):
         sig = inspect.signature(target.create_hamiltonian)  # type: ignore
         kwargs_names = [
             name for name, param in sig.parameters.items()
-            if param.kind == inspect.Parameter.VAR_KEYWORD
+            if param.kind == inspect.Parameter.KEYWORD_ONLY
         ]
         return frozenset(kwargs_names)
 
@@ -169,8 +170,8 @@ class ChainedPhysicalSystem(AbstractPhysicalObject):
         if frozenset(kwargs.keys()) != self._get_all_kwarg_names():
             raise ValueError(
                 "Provided kwargs are not compatible with the chained system. "
-                f"Expected: {self._get_all_kwarg_names()}, "
-                f"Provided: {frozenset(kwargs.keys())}"
+                f"Expected: {sorted(self._get_all_kwarg_names())}, "
+                f"Provided: {sorted(kwargs.keys())}"
             )
 
         ham = []
@@ -222,6 +223,29 @@ class EachSingleQubitSingleAxisObservable(AbstractObservable):
         ]
 
 
+class TotalMagnetizationObservable(AbstractObservable):
+    def __init__(self, *, n_qubit: int, axis: Axis):
+        """
+        単一軸観測量を初期化する。
+
+        Args:
+            n_qubit (int): 量子ビット数
+            axis (Axis): 観測軸（X、Y、またはZ軸）
+        """
+        self._n_qubit = n_qubit
+        self._axis = axis
+
+    def create_hamiltonian(self):
+        ham = reduce(
+            lambda x, y: x + y,
+            (
+                fullgate(self._n_qubit, f"{self._axis.name}{i}")
+                for i in range(self._n_qubit)
+            ),
+        )
+        return [ham]
+
+
 class NVReservoirCollapseOperator(AbstractCollapseOperator):
     """
     NVセンター量子リザバーの崩壊演算子。
@@ -254,7 +278,7 @@ class NVReservoirCollapseOperator(AbstractCollapseOperator):
         ]
 
 
-class FullInteraction(AbstractPhysicalObject):
+class FullInteraction(AbstractIsolatedPhysicalSystem):
     """
     量子ビット間の全結合相互作用。
 
@@ -328,7 +352,7 @@ class FullInteraction(AbstractPhysicalObject):
         ]
 
 
-class MagneticInteractionBase:
+class MagneticInteractionMixin:
     def __init__(self, coeff: np.ndarray, *, axis: Axis):
         """
         磁場相互作用を初期化する。
@@ -376,7 +400,7 @@ class MagneticInteractionBase:
         return len(self._coeff)
 
 
-class ResponsiveMagneticInteraction(MagneticInteractionBase, AbstractResponsivePhysicalSystem):
+class ResponsiveMagneticInteraction(MagneticInteractionMixin, AbstractResponsivePhysicalSystem):
     """
     磁場による相互作用。
 
@@ -414,7 +438,7 @@ class ResponsiveMagneticInteraction(MagneticInteractionBase, AbstractResponsiveP
         return ham_lst
 
 
-class IsolatedMagneticInteraction(MagneticInteractionBase, AbstractIsolatedPhysicalSystem):
+class IsolatedMagneticInteraction(MagneticInteractionMixin, AbstractIsolatedPhysicalSystem):
     """
     孤立した磁場相互作用。
 
@@ -439,7 +463,7 @@ class IsolatedMagneticInteraction(MagneticInteractionBase, AbstractIsolatedPhysi
         return ham_lst
 
 
-class NVReservoirPhysicsSystem(AbstractResponsivePhysicalSystem):
+class NVPhysicalSystem(AbstractResponsivePhysicalSystem):
     """
     NVセンターベースの量子リザバー物理システム。
 
@@ -455,7 +479,7 @@ class NVReservoirPhysicsSystem(AbstractResponsivePhysicalSystem):
             n_qubit: int,
             j_mean: float,
             j_std: float,
-            j_axis: Axis,
+            j_axis: Axis | Sequence[Axis],
             h_mean: float,
             h_std: float,
             h_axis: Axis,
@@ -479,13 +503,26 @@ class NVReservoirPhysicsSystem(AbstractResponsivePhysicalSystem):
             rng (np.random.RandomState | None, optional): 乱数生成器
         """
         rng = check_seed_or_rng_and_get_rng(seed=seed, rng=rng)
-        self._full_interaction = FullInteraction.create_instance(
-            n_qubit=n_qubit,
-            mean=j_mean / (n_qubit * (n_qubit - 1) / 2),  # nC2個の相互作用
-            std=j_std,
-            axis=j_axis,
-            rng=rng,
+
+        # Full interaction
+        if isinstance(j_axis, Axis):
+            j_axis = [j_axis]
+        assert all(isinstance(item, Axis) for item in j_axis)
+        self._full_interaction = reduce(
+            lambda x, y: x + y,
+            (
+                FullInteraction.create_instance(
+                    n_qubit=n_qubit,
+                    mean=j_mean / (n_qubit * (n_qubit - 1) / 2) / len(j_axis),  # (nC2*軸数)個の相互作用
+                    std=j_std,
+                    axis=j_axis_item,
+                    rng=rng,
+                )
+                for j_axis_item in j_axis
+            ),
         )
+
+        # Magnetic interaction
         self._magnetic_interaction = IsolatedMagneticInteraction.create_instance(
             n_qubit=n_qubit,
             # time_dependent_magnetic_interactionと合わせて2n個の作用
@@ -494,6 +531,8 @@ class NVReservoirPhysicsSystem(AbstractResponsivePhysicalSystem):
             axis=h_axis,
             rng=rng,
         )
+
+        # Time-dependent magnetic interaction
         self._time_dependent_magnetic_interaction = ResponsiveMagneticInteraction.create_instance(
             n_qubit=n_qubit,
             mean=h_mean / (n_qubit * 2),  # magnetic_interactionと合わせて2n個の作用
