@@ -553,9 +553,23 @@ class NVPhysicalSystem(AbstractResponsivePhysicalSystem):
         """
         ham_1 = self._full_interaction.create_hamiltonian()
         ham_2 = self._magnetic_interaction.create_hamiltonian()
-        ham_3 = self._time_dependent_magnetic_interaction.create_hamiltonian(
-            u_t=u_t)
+        ham_3 = self._time_dependent_magnetic_interaction.create_hamiltonian(u_t=u_t)
         return ham_1 + ham_2 + ham_3
+
+
+class SingleNVSystem(AbstractResponsivePhysicalSystem):
+    def __init__(self, *, h: float, axis: Axis):
+        self._h = h
+        self._axis = axis
+
+        # Time-dependent magnetic interaction
+        self._time_dependent_magnetic_interaction = ResponsiveMagneticInteraction(
+            coeff=np.array([h]),
+            axis=self._axis,
+        )
+
+    def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:
+        return self._time_dependent_magnetic_interaction.create_hamiltonian(u_t=u_t)
 
 
 class FNQRCPhysicsSystem(AbstractResponsivePhysicalSystem):
