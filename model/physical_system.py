@@ -224,7 +224,7 @@ class EachSingleQubitSingleAxisObservable(AbstractObservable):
 
 
 class TotalMagnetizationObservable(AbstractObservable):
-    def __init__(self, *, n_qubit: int, axis: Axis):
+    def __init__(self, *, n_qubit: int, axis: Axis, normalize=False):
         """
         単一軸観測量を初期化する。
 
@@ -234,6 +234,7 @@ class TotalMagnetizationObservable(AbstractObservable):
         """
         self._n_qubit = n_qubit
         self._axis = axis
+        self._normalize = normalize
 
     def create_hamiltonian(self):
         ham = reduce(
@@ -243,6 +244,8 @@ class TotalMagnetizationObservable(AbstractObservable):
                 for i in range(self._n_qubit)
             ),
         )
+        if self._normalize:
+            ham /= self._n_qubit
         return [ham]
 
 
@@ -557,15 +560,24 @@ class NVPhysicalSystem(AbstractResponsivePhysicalSystem):
         return ham_1 + ham_2 + ham_3
 
 
-class SingleNVSystem(AbstractResponsivePhysicalSystem):
-    def __init__(self, *, h: float, axis: Axis):
-        self._h = h
+class NoInteractionNVSystem(AbstractResponsivePhysicalSystem):
+    def __init__(self, *, coeff: np.ndarray, axis: Axis):
+        assert isinstance(coeff, np.ndarray) and coeff.ndim == 1
+        self._coeff = coeff
         self._axis = axis
+        self._n_qubit = len(coeff)
 
         # Time-dependent magnetic interaction
         self._time_dependent_magnetic_interaction = ResponsiveMagneticInteraction(
-            coeff=np.array([h]),
+            coeff=coeff,
             axis=self._axis,
+        )
+
+    @classmethod
+    def create_instance_with_constant_coefficient(cls, *, n_qubit: int, axis: Axis, value: float):
+        return cls(
+            coeff=np.full(n_qubit, value, np.float32),
+            axis=axis,
         )
 
     def create_hamiltonian(self, *, u_t: Callable[[float], float]) -> Sequence[ElementType]:

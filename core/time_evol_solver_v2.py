@@ -74,12 +74,15 @@ class StepResult:
             for eigvec in eigvecs
         ])
 
+        # たまに確率が負になるので0にする
+        probabilities = np.where(probabilities <= 0, 0, probabilities)
+
         # 確率の正規化チェック (浮動小数点誤差のため)
         prob_sum = np.sum(probabilities)
         if not np.isclose(prob_sum, 1.0):
             warnings.warn(
                 f"Probabilities do not sum to 1.0, but to {prob_sum:.6g}. Normalizing.")
-            probabilities /= prob_sum
+        probabilities /= prob_sum
 
         # 観測値をサンプリング
         samples = rng.choice(a=eigvals.real, p=probabilities, size=n_samples)
@@ -213,6 +216,11 @@ class TimeEvolutionResult:
         final_step = self._step_results[-1]
         return final_step.rho
 
+    def sample_measurements(self, obs: Qobj, *, n_samples: int, rng: np.random.RandomState) \
+            -> np.ndarray:  # shape: (n_obs,)
+        samples = self._step_results[-1].sample(obs=obs, n_samples=n_samples, rng=rng)
+        return samples
+
 
 class AbstractTimeEvolutionSolver(ABC):
     def __init__(
@@ -335,7 +343,7 @@ class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
                 stored_step_results.append(StepResult(t=float(t), rho=rho))
             _index += 1
 
-        # Set options with callback included
+        # Set options (no callback option in qutip 5.2)
         options: dict[str, Any] = {
             "store_final_state": True,
         }
@@ -350,6 +358,7 @@ class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
             c_ops = self._collapse_operator.create_hamiltonian()
 
         # Solve the master equation
+        # Note: Using e_ops with function to simulate callback functionality for qutip 5.2
         qutip_result = qutip.mesolve(
             H=self._system.create_hamiltonian(u_t=u_t),
             rho0=self._current_rho,
@@ -361,7 +370,14 @@ class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
 
         # Create result and update system state
         time_evol_result = TimeEvolutionResult(step_results=stored_step_results)
-        assert np.isclose(time_evol_result.times, t_seq[result_index], atol=1e-12).all()
+
+        # Verify times match expected indices (if result_index was specified)
+        if result_index is not None:
+            expected_times = t_seq[result_index]
+            actual_times = time_evol_result.times
+            assert np.isclose(actual_times, expected_times, atol=1e-12).all(), \
+                f"Times mismatch: expected {expected_times}, got {actual_times}"
+
         self._current_rho = qutip_result.final_state
         self._current_time = float(t_seq[-1])
         return time_evol_result
