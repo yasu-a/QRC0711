@@ -224,7 +224,7 @@ class EachSingleQubitSingleAxisObservable(AbstractObservable):
 
 
 class TotalMagnetizationObservable(AbstractObservable):
-    def __init__(self, *, n_qubit: int, axis: Axis, normalize=False):
+    def __init__(self, *, n_qubit: int, axis: Axis, normalize=False, scaling=1.0):
         """
         単一軸観測量を初期化する。
 
@@ -235,6 +235,7 @@ class TotalMagnetizationObservable(AbstractObservable):
         self._n_qubit = n_qubit
         self._axis = axis
         self._normalize = normalize
+        self._scaling = scaling
 
     def create_hamiltonian(self):
         ham = reduce(
@@ -246,6 +247,7 @@ class TotalMagnetizationObservable(AbstractObservable):
         )
         if self._normalize:
             ham /= self._n_qubit
+        ham *= self._scaling
         return [ham]
 
 

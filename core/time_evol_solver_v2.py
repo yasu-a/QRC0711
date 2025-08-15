@@ -235,11 +235,14 @@ class AbstractTimeEvolutionSolver(ABC):
         self._init_psi = init_psi
 
     @abstractmethod
-    def reset_state(self) -> None:
+    def reset_state(self, t: float = 0.0) -> None:
         """Reset the solver state back to initial conditions.
 
         This resets any internal state like density matrices back to their initial values,
         allowing the solver to be reused for multiple forward passes from the same starting point.
+
+        Args:
+            t (float): Time to reset the state to.
         """
         raise NotImplementedError()
 
@@ -289,9 +292,9 @@ class QutipMESolveTimeEvolutionSolver(AbstractTimeEvolutionSolver):
         # Flag to track if imaginary value warning has been shown
         self._large_expect_imag_warned = False
 
-    def reset_state(self) -> None:
+    def reset_state(self, t: float = 0.0) -> None:
         # Reset density matrix to initial state
-        self._current_time = 0.0
+        self._current_time = t
         self._current_rho = self._init_rho
 
     def _warn_large_expect_imag(self, imag_max: float):
